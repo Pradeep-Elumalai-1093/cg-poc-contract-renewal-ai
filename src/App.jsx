@@ -34,8 +34,8 @@ const T = {
 const RISK_TIER_COLOR = { Low: T.safe, Medium: T.amber, High: T.risk };
 const BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"];
 const BUCKET_LABEL = {
-  ">90": "Not yet due", "90": "\u226490 days", "60": "\u226460 days",
-  "45": "\u226445 days", "30": "\u226430 days", "10": "\u226410 days", "Lost": "Lost",
+  ">90": "Not yet due", "90": " days", "60": " days",
+  "45": " days", "30": " days", "10": " days", "Lost": "Lost",
 };
 const DUE_BUCKETS = ["90", "60", "45", "30", "10"];
 
@@ -513,9 +513,9 @@ export default function ContractRenewalPOC() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation \u2014 Proof of Concept</div>
+          <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation  Proof of Concept</div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
-          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data \u2014 in-memory only \u2014 NATT  ETT  APAC TT</div>
+          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data  in-memory only  NATT  ETT  APAC TT</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <button
@@ -528,7 +528,7 @@ export default function ContractRenewalPOC() {
             }}
           >
             <Play size={15} fill="#fff" />
-            {running ? `Running ${progress.done}/${progress.total}\u2026` : `Run daily batch (${dueContracts.length} due)`}
+            {running ? `Running ${progress.done}/${progress.total}` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
         </div>
@@ -565,7 +565,7 @@ export default function ContractRenewalPOC() {
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value segmentation</div>
-              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Months on book vs. contract value \u2014 colored by risk tier</div>
+              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Months on book vs. contract value  colored by risk tier</div>
               <ResponsiveContainer width="100%" height={280}>
                 <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
                   <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
@@ -604,9 +604,9 @@ export default function ContractRenewalPOC() {
             <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Portfolio KPIs</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <StatBlock label="At-risk contracts" value={contracts.filter((c) => c.riskTier === "High").length} sub="risk score \u2265 66" accent={T.risk} />
+                <StatBlock label="At-risk contracts" value={contracts.filter((c) => c.riskTier === "High").length} sub="risk score  66" accent={T.risk} />
                 <StatBlock label="Lost" value={bucketCounts["Lost"]} sub="past expiry" accent={T.risk} />
-                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "\u2014"} sub="of logged outcomes" />
+                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : ""} sub="of logged outcomes" />
                 <StatBlock label="Recommendations run" value={metrics.totalRuns} sub={`of ${contracts.length} contracts`} />
               </div>
               <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted }}>
@@ -620,7 +620,7 @@ export default function ContractRenewalPOC() {
           {/* Worklist */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `\u2014 ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? ` ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
               {bucketFilter && <button onClick={() => setBucketFilter(null)} style={{ border: "none", background: "none", fontSize: 12, color: T.info, cursor: "pointer" }}>Clear filter</button>}
             </div>
             <div style={{ maxHeight: 360, overflowY: "auto" }}>
@@ -680,7 +680,7 @@ export default function ContractRenewalPOC() {
                     <tr key={r.runId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(r.contractId)}>
                       <td style={{ fontWeight: 600 }}>{contracts.find((c) => c.contractId === r.contractId)?.customerName}</td>
                       <td>{BUCKET_LABEL[r.milestone]}</td>
-                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "\u2014"}</td>
+                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || ""}</td>
                       <td>{r.retryCount}</td>
                       <td>
                         {r.error
@@ -696,7 +696,7 @@ export default function ContractRenewalPOC() {
                     </tr>
                   ))}
                   {trace.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet \u2014 run the daily batch from the Dashboard tab.</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet  run the daily batch from the Dashboard tab.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -766,7 +766,7 @@ export default function ContractRenewalPOC() {
                   <span style={{ fontSize: 13, fontWeight: 700, color: T.risk }}>Run failed</span>
                 </div>
                 <div style={{ fontSize: 12.5, color: T.ink }}>{selectedTrace.errorMessage}</div>
-                <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed \u2014 it will be retried on the next batch run.</div>
+                <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed  it will be retried on the next batch run.</div>
               </Card>
             )}
 
