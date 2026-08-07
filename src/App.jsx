@@ -456,7 +456,7 @@ export default function ContractRenewalPOC() {
             }}
           >
             <Play size={15} fill="#fff" />
-            {running ? `Running ${progress.done}/${progress.total}\u2026` : `Run daily batch (${dueContracts.length} due)`}
+            {running ? `Running ${progress.done}/${progress.total}` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
         </div>
@@ -732,7 +732,7 @@ export default function ContractRenewalPOC() {
                     ))}
                   </div>
                   <textarea
-                    placeholder="Optional rep note\u2026"
+                    placeholder="Optional rep note"
                     value={selectedTrace.outcomeNote}
                     onChange={(e) => setOutcome(selectedContract.contractId, selectedTrace.outcome, e.target.value)}
                     style={{ width: "100%", minHeight: 60, border: `1px solid ${T.border}`, borderRadius: 7, padding: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }}
