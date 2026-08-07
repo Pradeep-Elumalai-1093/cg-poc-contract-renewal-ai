@@ -133,21 +133,58 @@ function generateContracts() {
 /* ---------------------------------------------------------------
    LLM CLIENT — thin wrapper, swappable provider boundary
 ----------------------------------------------------------------*/
+const LLM_TIMEOUT_MS = 60000;
+
 async function callClaude(promptText) {
   const started = performance.now();
-  const response = await fetch("/api/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      messages: [{ role: "user", content: promptText }],
-    }),
-  });
-  const data = await response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch("/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: promptText }],
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === "AbortError") {
+      throw new Error(`LLM call timed out after ${LLM_TIMEOUT_MS / 1000}s. If you're using vLLM, check the model is loaded and VLLM_BASE_URL is reachable.`);
+    }
+    // fetch itself failed — almost always means the proxy server (port 3001) isn't running,
+    // or "npm run dev" only started the Vite client and not the server half.
+    throw new Error(`Could not reach the local proxy at /api/messages. Is "npm run dev" running both the server and client? (${err.message})`);
+  }
+  clearTimeout(timeout);
+
   const latencyMs = Math.round(performance.now() - started);
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (err) {
+    throw new Error(`Proxy returned a non-JSON response (HTTP ${response.status}). Check the server.js terminal output for the real error.`);
+  }
+
+  if (!response.ok) {
+    // our proxy normalizes provider errors into { error: "..." } — surface that verbatim
+    throw new Error(data.error || `Proxy/LLM request failed with HTTP ${response.status}.`);
+  }
+  if (data.error) {
+    throw new Error(data.error);
+  }
+
   const textBlock = (data.content || []).find((b) => b.type === "text");
   const raw = textBlock ? textBlock.text : "";
+  if (!raw) {
+    throw new Error("LLM response had no text content — check that VLLM_MODEL in .env exactly matches the model vLLM was launched with.");
+  }
   const cleaned = raw.replace(/```json|```/g, "").trim();
   let parsed = null;
   try { parsed = JSON.parse(cleaned); } catch (e) { parsed = null; }
@@ -229,29 +266,56 @@ async function runAgentGraph(contract, priorTrace) {
   let totalInputTokens = 0, totalOutputTokens = 0, totalLatency = 0;
   let lastRecommendation = null, lastEvaluation = null, escalated = false, passed = false;
 
-  while (retryCount <= MAX_RETRIES) {
-    const recRes = await callClaude(recommendationPrompt(ctx, CAMPAIGN_TAXONOMY, priorFeedback));
-    totalInputTokens += recRes.inputTokens; totalOutputTokens += recRes.outputTokens; totalLatency += recRes.latencyMs;
-    const recommendation = recRes.parsed || { action: "Unparsed", campaign: "Personal outreach call", execution_owner: "Dealer", rationale: "Model response could not be parsed.", confidence: 0 };
-    lastRecommendation = recommendation;
+  try {
+    while (retryCount <= MAX_RETRIES) {
+      const recRes = await callClaude(recommendationPrompt(ctx, CAMPAIGN_TAXONOMY, priorFeedback));
+      totalInputTokens += recRes.inputTokens; totalOutputTokens += recRes.outputTokens; totalLatency += recRes.latencyMs;
+      const recommendation = recRes.parsed || { action: "Unparsed", campaign: "Personal outreach call", execution_owner: "Dealer", rationale: "Model response could not be parsed.", confidence: 0 };
+      lastRecommendation = recommendation;
 
-    const evalRes = await callClaude(evaluationPrompt(ctx, recommendation));
-    totalInputTokens += evalRes.inputTokens; totalOutputTokens += evalRes.outputTokens; totalLatency += evalRes.latencyMs;
-    const evaluation = evalRes.parsed || { scores: { groundedness: 0, policy_compliance: 0, actionability: 0, non_repetition: 0, tone: 0 }, notes: "Model response could not be parsed." };
-    lastEvaluation = evaluation;
+      const evalRes = await callClaude(evaluationPrompt(ctx, recommendation));
+      totalInputTokens += evalRes.inputTokens; totalOutputTokens += evalRes.outputTokens; totalLatency += evalRes.latencyMs;
+      const evaluation = evalRes.parsed || { scores: { groundedness: 0, policy_compliance: 0, actionability: 0, non_repetition: 0, tone: 0 }, notes: "Model response could not be parsed." };
+      lastEvaluation = evaluation;
 
-    const s = evaluation.scores || {};
-    const vals = ["groundedness", "policy_compliance", "actionability", "non_repetition", "tone"].map((k) => Number(s[k]) || 0);
-    const composite = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const policyOk = (Number(s.policy_compliance) || 0) >= POLICY_FLOOR;
-    passed = policyOk && composite >= COMPOSITE_PASS;
-    lastEvaluation.composite = Math.round(composite * 10) / 10;
-    lastEvaluation.pass = passed;
+      const s = evaluation.scores || {};
+      const vals = ["groundedness", "policy_compliance", "actionability", "non_repetition", "tone"].map((k) => Number(s[k]) || 0);
+      const composite = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const policyOk = (Number(s.policy_compliance) || 0) >= POLICY_FLOOR;
+      passed = policyOk && composite >= COMPOSITE_PASS;
+      lastEvaluation.composite = Math.round(composite * 10) / 10;
+      lastEvaluation.pass = passed;
 
-    if (passed) break;
-    retryCount++;
-    priorFeedback = evaluation.notes || "Composite or policy-compliance score too low.";
-    if (retryCount > MAX_RETRIES) { escalated = true; break; }
+      if (passed) break;
+      retryCount++;
+      priorFeedback = evaluation.notes || "Composite or policy-compliance score too low.";
+      if (retryCount > MAX_RETRIES) { escalated = true; break; }
+    }
+  } catch (err) {
+    // A failed LLM call (proxy unreachable, vLLM down, timeout, wrong model name, etc.)
+    // still produces a trace record — visible in the Trace tab as "Error" — instead of
+    // silently leaving the contract stuck at "Not run" with no explanation.
+    return {
+      runId: `RUN-${contract.contractId}-${contract.bucket}-${Date.now()}`,
+      contractId: contract.contractId,
+      customerId: contract.customerId,
+      milestone: contract.bucket,
+      timestamp: new Date().toISOString(),
+      context: ctx,
+      recommendation: lastRecommendation,
+      evaluation: lastEvaluation,
+      retryCount: Math.min(retryCount, MAX_RETRIES),
+      escalated: false,
+      pass: false,
+      error: true,
+      errorMessage: err.message || String(err),
+      latencyMs: totalLatency,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      costUsd: (totalInputTokens / 1e6) * COST_PER_M_INPUT + (totalOutputTokens / 1e6) * COST_PER_M_OUTPUT,
+      outcome: null,
+      outcomeNote: "",
+    };
   }
 
   return {
@@ -266,6 +330,8 @@ async function runAgentGraph(contract, priorTrace) {
     retryCount: Math.min(retryCount, MAX_RETRIES),
     escalated,
     pass: passed,
+    error: false,
+    errorMessage: null,
     latencyMs: totalLatency,
     inputTokens: totalInputTokens,
     outputTokens: totalOutputTokens,
@@ -351,9 +417,15 @@ export default function ContractRenewalPOC() {
         try {
           const result = await runAgentGraph(contract, priorTrace);
           setTrace((prev) => [...prev, result]);
-          setContracts((prev) => prev.map((c) =>
-            c.contractId === contract.contractId ? { ...c, lastMilestoneProcessed: contract.bucket } : c
-          ));
+          if (result.error) {
+            // Leave lastMilestoneProcessed untouched so this contract stays in the
+            // due queue and gets retried on the next "Run daily batch" click.
+            setApiError(result.errorMessage);
+          } else {
+            setContracts((prev) => prev.map((c) =>
+              c.contractId === contract.contractId ? { ...c, lastMilestoneProcessed: contract.bucket } : c
+            ));
+          }
         } catch (e) {
           setApiError(String(e?.message || e));
         }
@@ -443,7 +515,7 @@ export default function ContractRenewalPOC() {
         <div>
           <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation \u2014 Proof of Concept</div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
-          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data \u2014 in-memory only \u2014 NATT \u00b7 ETT \u00b7 APAC TT</div>
+          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data \u2014 in-memory only \u2014 NATT  ETT  APAC TT</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <button
@@ -456,7 +528,7 @@ export default function ContractRenewalPOC() {
             }}
           >
             <Play size={15} fill="#fff" />
-            {running ? `Running ${progress.done}/${progress.total}` : `Run daily batch (${dueContracts.length} due)`}
+            {running ? `Running ${progress.done}/${progress.total}\u2026` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
         </div>
@@ -565,12 +637,13 @@ export default function ContractRenewalPOC() {
                         <td>{c.region}</td>
                         <td>{c.channel}</td>
                         <td><Badge text={BUCKET_LABEL[c.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
-                        <td><Badge text={`${c.riskTier} \u00b7 ${c.riskScore}`} color={RISK_TIER_COLOR[c.riskTier]} bg={c.riskTier === "High" ? T.riskBg : c.riskTier === "Medium" ? T.amberBg : T.safeBg} /></td>
+                        <td><Badge text={`${c.riskTier}  ${c.riskScore}`} color={RISK_TIER_COLOR[c.riskTier]} bg={c.riskTier === "High" ? T.riskBg : c.riskTier === "Medium" ? T.amberBg : T.safeBg} /></td>
                         <td>${c.contractValue.toLocaleString()}</td>
                         <td>
                           {!t && <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>}
-                          {t && t.pass && !t.escalated && <Badge text="Recommended" color={T.safe} bg={T.safeBg} />}
-                          {t && t.escalated && <Badge text="Escalated" color={T.risk} bg={T.riskBg} />}
+                          {t && t.error && <span title={t.errorMessage}><Badge text="Error" color={T.risk} bg={T.riskBg} /></span>}
+                          {t && !t.error && t.pass && !t.escalated && <Badge text="Recommended" color={T.safe} bg={T.safeBg} />}
+                          {t && !t.error && t.escalated && <Badge text="Escalated" color={T.risk} bg={T.riskBg} />}
                         </td>
                         <td><ChevronRight size={15} color={T.inkFaint} /></td>
                       </tr>
@@ -610,11 +683,13 @@ export default function ContractRenewalPOC() {
                       <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "\u2014"}</td>
                       <td>{r.retryCount}</td>
                       <td>
-                        {r.escalated
-                          ? <Badge text="Escalated" color={T.risk} bg={T.riskBg} />
-                          : r.pass
-                            ? <Badge text="Passed" color={T.safe} bg={T.safeBg} />
-                            : <Badge text="Failed" color={T.risk} bg={T.riskBg} />}
+                        {r.error
+                          ? <span title={r.errorMessage}><Badge text="Error" color={T.risk} bg={T.riskBg} /></span>
+                          : r.escalated
+                            ? <Badge text="Escalated" color={T.risk} bg={T.riskBg} />
+                            : r.pass
+                              ? <Badge text="Passed" color={T.safe} bg={T.safeBg} />
+                              : <Badge text="Failed" color={T.risk} bg={T.riskBg} />}
                       </td>
                       <td style={{ color: T.inkMuted }}>{r.latencyMs}ms</td>
                       <td style={{ color: T.inkMuted }}>${r.costUsd.toFixed(4)}</td>
@@ -645,7 +720,7 @@ export default function ContractRenewalPOC() {
                   <StatBlock label="Engaged" value={s.engaged} accent={T.safe} />
                 </div>
                 <div style={{ fontSize: 11.5, color: T.inkMuted }}>
-                  Response rate {responseRate}% \u00b7 Engagement rate {engagedRate}%
+                  Response rate {responseRate}%  Engagement rate {engagedRate}%
                 </div>
               </Card>
             );
@@ -659,7 +734,7 @@ export default function ContractRenewalPOC() {
           <div style={{ width: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
               <div>
-                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} \u00b7 {selectedContract.region}</div>
+                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId}  {selectedContract.region}</div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedContract.customerName}</div>
               </div>
               <button onClick={() => setSelected(null)} style={{ border: "none", background: "none", cursor: "pointer" }}><X size={18} color={T.inkFaint} /></button>
@@ -668,7 +743,7 @@ export default function ContractRenewalPOC() {
             <div style={{ display: "flex", gap: 8, margin: "10px 0 16px", flexWrap: "wrap" }}>
               <Badge text={selectedContract.channel} color={T.info} bg={T.infoBg} />
               <Badge text={BUCKET_LABEL[selectedContract.bucket]} color={T.inkMuted} bg={T.surfaceSunken} />
-              <Badge text={`${selectedContract.riskTier} risk \u00b7 ${selectedContract.riskScore}`} color={RISK_TIER_COLOR[selectedContract.riskTier]} bg={selectedContract.riskTier === "High" ? T.riskBg : selectedContract.riskTier === "Medium" ? T.amberBg : T.safeBg} />
+              <Badge text={`${selectedContract.riskTier} risk  ${selectedContract.riskScore}`} color={RISK_TIER_COLOR[selectedContract.riskTier]} bg={selectedContract.riskTier === "High" ? T.riskBg : selectedContract.riskTier === "Medium" ? T.amberBg : T.safeBg} />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
@@ -684,7 +759,18 @@ export default function ContractRenewalPOC() {
               </div>
             )}
 
-            {selectedTrace && (
+            {selectedTrace && selectedTrace.error && (
+              <Card style={{ padding: 14, marginBottom: 14, background: T.riskBg, borderColor: T.risk }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <AlertTriangle size={15} color={T.risk} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.risk }}>Run failed</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: T.ink }}>{selectedTrace.errorMessage}</div>
+                <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed \u2014 it will be retried on the next batch run.</div>
+              </Card>
+            )}
+
+            {selectedTrace && !selectedTrace.error && (
               <>
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Recommendation</div>
                 <Card style={{ padding: 14, marginBottom: 14, background: T.surfaceSunken }}>
