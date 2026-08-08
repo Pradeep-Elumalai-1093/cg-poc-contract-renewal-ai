@@ -461,7 +461,6 @@ export default function ContractRenewalPOC() {
   const [modelInfo, setModelInfo] = useState(null);
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
-  const [outcomeByRiskBucket, setOutcomeByRiskBucket] = useState(null);
   const [regionSummary, setRegionSummary] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [bucketFilter, setBucketFilter] = useState(null);
@@ -475,13 +474,13 @@ export default function ContractRenewalPOC() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [c, t, m, cs, mi, ts, cust, obr, rs] = await Promise.all([
+      const [c, t, m, cs, mi, ts, cust, rs] = await Promise.all([
         api.getContracts(), api.getTrace(), api.getMetrics(), api.getCampaigns(),
-        api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(), api.getOutcomeByRiskBucket(),
+        api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(),
         api.getRegionSummary(),
       ]);
       setContracts(c); setTrace(t); setMetrics(m); setCampaignSummary(cs);
-      setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust); setOutcomeByRiskBucket(obr);
+      setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust);
       setRegionSummary(rs);
     } catch (e) {
       setApiError(String(e.message || e));
@@ -584,6 +583,40 @@ export default function ContractRenewalPOC() {
       return regionOk && channelOk;
     });
   }, [contracts, regionFilter, channelFilter]);
+
+  // Computed client-side (not fetched from /api/outcome-by-risk-bucket) so it
+  // stays in sync with the region/channel filters instantly. Each trace
+  // record's own context.region/context.channel is a snapshot taken at the
+  // time that recommendation ran, which is what filtering should key off —
+  // not the contract's current region (though those are the same in
+  // practice, since region doesn't change after generation).
+  const filteredOutcomeByRiskBucket = useMemo(() => {
+    const bucketEdges = [[0, 19], [20, 39], [40, 59], [60, 79], [80, 100]];
+    const labels = ["0-19", "20-39", "40-59", "60-79", "80-100"];
+    const engaged = [0, 0, 0, 0, 0];
+    const notEngaged = [0, 0, 0, 0, 0];
+    let totalWithOutcome = 0;
+
+    trace.forEach((r) => {
+      if (!r.outcome) return;
+      const ctx = r.context || {};
+      const regionOk = regionFilter.length === 0 || regionFilter.includes(ctx.region);
+      const channelOk = channelFilter.length === 0 || channelFilter.includes(ctx.channel);
+      if (!regionOk || !channelOk) return;
+      const score = ctx.risk_score;
+      if (score == null) return;
+      totalWithOutcome++;
+      for (let i = 0; i < bucketEdges.length; i++) {
+        const [lo, hi] = bucketEdges[i];
+        if (score >= lo && score <= hi) {
+          if (r.outcome === "Engaged") engaged[i]++; else notEngaged[i]++;
+          break;
+        }
+      }
+    });
+
+    return { buckets: labels, engaged, notEngaged, totalWithOutcome };
+  }, [trace, regionFilter, channelFilter]);
 
   const bucketCounts = useMemo(() => {
     const c = {};
@@ -727,7 +760,7 @@ export default function ContractRenewalPOC() {
             ))}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 16, marginBottom: 18 }}>
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value segmentation</div>
@@ -780,6 +813,19 @@ export default function ContractRenewalPOC() {
                   ? `${dueContracts.length} contract-milestones are due for a fresh recommendation.`
                   : "All eligible contracts are up to date for their current milestone."}
               </div>
+            </Card>
+            <Card style={{ padding: 16 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign response by risk bucket</div>
+              <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
+                Live signal from logged outcomes, reflecting the region/channel filters above — not a validated renewal-outcome backtest, since we don't have historical renewal ground truth.
+              </div>
+              {filteredOutcomeByRiskBucket.totalWithOutcome > 0 ? (
+                <OutcomeBucketChart data={filteredOutcomeByRiskBucket} />
+              ) : (
+                <div style={{ fontSize: 12, color: T.inkFaint, padding: "18px 0", textAlign: "center" }}>
+                  Not enough logged outcomes yet for this filter — log a few via Feedback Logging, or clear the filters.
+                </div>
+              )}
             </Card>
           </div>
 
@@ -843,19 +889,7 @@ export default function ContractRenewalPOC() {
                 </Card>
               </>
             )}
-            <Card style={{ padding: 16 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign response by risk bucket</div>
-              <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
-                Live signal from logged outcomes — not a validated renewal-outcome backtest, since we don't have historical renewal ground truth.
-              </div>
-              {outcomeByRiskBucket && outcomeByRiskBucket.totalWithOutcome > 0 ? (
-                <OutcomeBucketChart data={outcomeByRiskBucket} />
-              ) : (
-                <div style={{ fontSize: 12, color: T.inkFaint, padding: "18px 0", textAlign: "center" }}>
-                  Not enough logged outcomes yet — log a few via Feedback Logging to populate this.
-                </div>
-              )}
-            </Card>
+
           </div>
         </>
       )}
@@ -864,7 +898,6 @@ export default function ContractRenewalPOC() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
             <Card><StatBlock label="First-pass rate" value={`${metrics.firstPassRate}%`} sub="passed with 0 retries" /></Card>
-            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${2}`} /></Card>
             <Card><StatBlock label="Escalation rate" value={`${metrics.escalationRate}%`} sub="sent to human review" accent={metrics.escalationRate > 0 ? T.risk : T.ink} /></Card>
             <Card><StatBlock label="Avg. latency" value={`${metrics.avgLatency}ms`} sub="per contract-milestone" /></Card>
             <Card><StatBlock label="Est. token cost" value={`$${metrics.totalCost.toFixed(3)}`} sub="cumulative, this session" /></Card>
