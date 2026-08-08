@@ -211,6 +211,49 @@ function EscalationPanel({ record, onToggleAction }) {
 }
 
 
+const PRIORITY_COLOR = { Critical: T.risk, High: T.amber, Medium: T.info, Low: T.inkFaint };
+const PRIORITY_BG = { Critical: T.riskBg, High: T.amberBg, Medium: T.infoBg, Low: T.surfaceSunken };
+
+function ServiceTicketHistory({ equipment, tickets }) {
+  return (
+    <>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
+        Historical service tickets
+      </div>
+      <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
+        <div style={{ padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 11.5, color: T.inkMuted, background: T.surfaceSunken }}>
+          {equipment.type} \u00b7 {equipment.count} unit{equipment.count === 1 ? "" : "s"} \u00b7 avg {equipment.avgAgeYears}y old
+          {equipment.critical && <span style={{ color: T.risk, fontWeight: 600 }}> \u00b7 Critical equipment</span>}
+        </div>
+        {(!tickets || tickets.length === 0) ? (
+          <div style={{ padding: 16, fontSize: 12, color: T.inkFaint }}>No service tickets on record.</div>
+        ) : (
+          <div style={{ maxHeight: 240, overflowY: "auto" }}>
+            {tickets.map((t, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "8px 14px",
+                  borderBottom: i < tickets.length - 1 ? `1px solid ${T.border}` : "none", fontSize: 12.5,
+                }}
+              >
+                <div style={{ width: 78, flexShrink: 0, fontFamily: "ui-monospace, monospace", fontSize: 11, color: T.inkFaint }}>{t.date}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600 }}>{t.issue}</span>
+                  <span style={{ color: T.inkMuted }}>
+                    {" "}\u00b7 {t.type}{t.slaMet === false ? " \u00b7 SLA missed" : ""} \u00b7 {t.resolutionHours}h resolution
+                  </span>
+                </div>
+                <Badge text={t.priority} color={PRIORITY_COLOR[t.priority] || T.inkMuted} bg={PRIORITY_BG[t.priority] || T.surfaceSunken} />
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
 function RiskFactorBreakdown({ factors }) {
   if (!factors) return null;
   const entries = Object.entries(factors).sort((a, b) => b[1] - a[1]);
@@ -842,6 +885,8 @@ export default function ContractRenewalPOC() {
               loadingLabel="Reading service ticket history"
               placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent. Generated automatically during the next batch run if you skip this."
             />
+
+            <ServiceTicketHistory equipment={selectedContract.equipment} tickets={selectedContract.serviceTickets} />
 
             {!selectedTrace && (
               <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>
