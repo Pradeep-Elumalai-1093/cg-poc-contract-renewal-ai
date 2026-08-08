@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from state import state, CAMPAIGN_TAXONOMY
+from rules import MODEL_INFO, suggested_renewal_terms
 
 app = FastAPI(title="Contract Renewal POC")
 
@@ -33,6 +34,14 @@ class FeedbackIn(BaseModel):
 class ActionStatusIn(BaseModel):
     contractId: str
     actionStatus: str  # "Action required" or "Action done"
+
+
+class ContractIdIn(BaseModel):
+    contractId: str
+
+
+class CustomerIdIn(BaseModel):
+    customerId: str
 
 
 @app.get("/api/contracts")
@@ -109,7 +118,13 @@ async def _process_batch(due: list[dict]):
     async def process(contract: dict):
         async with semaphore:
             prior = state.latest_trace_for(contract["contractId"])
-            result = await run_agent_graph(contract, prior)
+            ticket_summary_record = state.ticket_summaries.get(contract["contractId"])
+            ticket_summary = ticket_summary_record["data"] if ticket_summary_record and ticket_summary_record["status"] == "done" else None
+            customer_summary_record = state.customer_summaries.get(contract["customerId"])
+            customer_summary = customer_summary_record["data"] if customer_summary_record and customer_summary_record["status"] == "done" else None
+            terms = suggested_renewal_terms(contract)
+
+            result = await run_agent_graph(contract, prior, ticket_summary, customer_summary, terms)
             state.trace.append(result)
             if result["error"]:
                 # Leave lastMilestoneProcessed untouched so this contract is
@@ -150,6 +165,85 @@ def post_action_status(body: ActionStatusIn):
 def reset_state():
     state.reset()
     return {"reset": True, "contracts": len(state.contracts)}
+
+
+@app.get("/api/model-info")
+def get_model_info():
+    return MODEL_INFO
+
+
+@app.get("/api/ticket-summaries")
+def get_ticket_summaries():
+    return state.ticket_summaries
+
+
+@app.post("/api/ticket-summaries/run")
+async def run_ticket_summary(body: ContractIdIn):
+    from agents import run_ticket_summary_agent
+
+    contract = state.contract_by_id(body.contractId)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found.")
+    state.ticket_summaries[body.contractId] = {"status": "loading"}
+    result = await run_ticket_summary_agent(contract)
+    state.ticket_summaries[body.contractId] = result
+    return result
+
+
+@app.get("/api/customer-summaries")
+def get_customer_summaries():
+    return state.customer_summaries
+
+
+@app.post("/api/customer-summaries/run")
+async def run_customer_summary(body: CustomerIdIn):
+    from agents import run_customer_summary_agent
+
+    contracts = state.contracts_for_customer(body.customerId)
+    if not contracts:
+        raise HTTPException(status_code=404, detail="Customer not found.")
+    customer_name = contracts[0]["customerName"]
+    state.customer_summaries[body.customerId] = {"status": "loading"}
+    result = await run_customer_summary_agent(body.customerId, customer_name, contracts)
+    state.customer_summaries[body.customerId] = result
+    return result
+
+
+@app.get("/api/outcome-by-risk-bucket")
+def get_outcome_by_risk_bucket():
+    """Live proxy for a backtest: buckets logged campaign outcomes by the
+    risk score at the time of the recommendation. This is NOT a validated
+    renewal-outcome backtest (we don't have historical renewal ground truth)
+    — it's an honest, live signal of whether risk ranking correlates with
+    campaign engagement, and it's labeled as such in the UI."""
+    bucket_edges = [(0, 19), (20, 39), (40, 59), (60, 79), (80, 100)]
+    labels = ["0-19", "20-39", "40-59", "60-79", "80-100"]
+    engaged = [0] * 5
+    not_engaged = [0] * 5  # Declined + No response
+    total_with_outcome = 0
+
+    for record in state.trace:
+        outcome = record.get("outcome")
+        if not outcome:
+            continue
+        score = (record.get("context") or {}).get("risk_score")
+        if score is None:
+            continue
+        total_with_outcome += 1
+        for i, (lo, hi) in enumerate(bucket_edges):
+            if lo <= score <= hi:
+                if outcome == "Engaged":
+                    engaged[i] += 1
+                else:
+                    not_engaged[i] += 1
+                break
+
+    return {
+        "buckets": labels,
+        "engaged": engaged,
+        "notEngaged": not_engaged,
+        "totalWithOutcome": total_with_outcome,
+    }
 
 
 # Serve the built frontend (npm run build in /frontend -> /frontend/dist) if

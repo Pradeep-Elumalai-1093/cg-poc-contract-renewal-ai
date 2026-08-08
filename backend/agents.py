@@ -1,14 +1,19 @@
 """
 Agent graph: aggregator -> recommendation agent -> evaluation agent ->
-(retry up to MAX_RETRIES | pass | escalate). Policy-compliance failure is a
-hard fail regardless of composite score, per the confirmed design decision.
+(retry up to MAX_RETRIES | pass | escalate) -> content agent.
+
+Two additional agents (ticket summary, customer summary) are NOT part of
+this per-milestone graph — they run on demand, cached by contract/customer
+id, and their cached output (if present) is fed into the aggregator context
+here. This keeps their cost out of the daily batch entirely.
 """
-import time
+import json
 import uuid
 from datetime import datetime, timezone
 
 from state import CAMPAIGN_TAXONOMY
-from llm_client import call_llm, LLMError
+from rules import PRODUCT_CATALOG
+from llm_client import call_llm, LLMError, remove_think
 
 MAX_RETRIES = 2
 COMPOSITE_PASS = 7
@@ -16,8 +21,17 @@ POLICY_FLOOR = 6
 COST_PER_M_INPUT = 3.0
 COST_PER_M_OUTPUT = 15.0
 
+EVAL_CRITERIA = ["groundedness", "policy_compliance", "actionability", "non_repetition", "tone", "upsell_relevance"]
 
-def build_aggregator_context(contract: dict, prior_trace: dict | None) -> dict:
+
+def build_aggregator_context(
+    contract: dict,
+    prior_trace: dict | None,
+    ticket_summary: str | None,
+    customer_summary: str | None,
+    suggested_terms: dict,
+) -> dict:
+    catalog_entry = PRODUCT_CATALOG.get(contract["equipment"]["type"])
     return {
         "customer_id": contract["customerId"],
         "customer_name": contract["customerName"],
@@ -28,10 +42,15 @@ def build_aggregator_context(contract: dict, prior_trace: dict | None) -> dict:
         "contract_value_usd": contract["contractValue"],
         "margin_usd": contract["margin"],
         "payment_lag_days": contract["paymentLagDays"],
-        "complaint_count_last_year": contract["complaintCount"],
-        "service_call_trend": contract["serviceTrend"],
         "milestone": contract["bucket"],
         "risk_score": contract["riskScore"],
+        "risk_factors": contract["riskFactors"],
+        "segment": contract["segment"],
+        "equipment": contract["equipment"],
+        "product_catalog_entry": catalog_entry,
+        "suggested_renewal_terms": suggested_terms,
+        "ticket_summary": ticket_summary or "Not yet generated.",
+        "customer_summary": customer_summary or "Not yet generated.",
         "prior_milestone_action": (prior_trace or {}).get("recommendation", {}).get("campaign") if prior_trace else None,
         "prior_milestone_outcome": (prior_trace.get("outcome") or "not yet recorded") if prior_trace else None,
     }
@@ -40,29 +59,32 @@ def build_aggregator_context(contract: dict, prior_trace: dict | None) -> dict:
 def recommendation_prompt(ctx: dict, prior_feedback: str | None) -> str:
     taxonomy_names = " | ".join(t["name"] for t in CAMPAIGN_TAXONOMY)
     feedback_line = f"Your previous attempt was rejected by QA for this reason, revise accordingly: {prior_feedback}" if prior_feedback else ""
-    import json
-    return f"""You are a retention recommendation engine for a B2B truck/trailer HVAC service contract renewal system.
-Choose exactly ONE action from this taxonomy: {taxonomy_names}.
+    catalog = ctx.get("product_catalog_entry") or {}
+    upgrade_path = catalog.get("upgradePath", "none available")
+    return f"""You are the Deal Guidance Agent for a B2B truck/trailer HVAC service contract renewal system.
+Choose exactly ONE retention action from this taxonomy: {taxonomy_names}.
 If channel is "Dealer", execution_owner must be "Dealer". If channel is "Direct", execution_owner must be "Direct Sales Rep".
 Do not repeat an action that was already tried at a prior milestone for this same contract if it did not work.
+Use the ticket_summary and customer_summary in the context (if present) to ground your rationale in the account's actual history, not just the raw numbers.
+Only if genuinely relevant to the equipment and risk profile, suggest ONE upsell tied to this product catalog upgrade path: "{upgrade_path}". If it doesn't fit, say so plainly rather than forcing one.
 {feedback_line}
 
 Customer-contract context (JSON):
 {json.dumps(ctx, indent=2)}
 
 Respond with ONLY valid JSON, no markdown fences, no preamble:
-{{"action": "<short action name>", "campaign": "<one taxonomy name exactly>", "execution_owner": "Dealer or Direct Sales Rep", "rationale": "<2-3 sentences, grounded only in the context above>", "confidence": <0 to 1 number>}}"""
+{{"action": "<short action name>", "campaign": "<one taxonomy name exactly>", "execution_owner": "Dealer or Direct Sales Rep", "rationale": "<2-3 sentences, grounded only in the context above>", "upsell": "<one sentence tied to the catalog upgrade path, or 'Not recommended for this account right now'>", "confidence": <0 to 1 number>}}"""
 
 
 def evaluation_prompt(ctx: dict, recommendation: dict) -> str:
-    import json
     return f"""You are a QA evaluator scoring a retention recommendation before it reaches a sales rep.
 Score each criterion 0-10 based on the context and recommendation below.
-- groundedness: does the rationale only reference facts present in the context, no invented details?
+- groundedness: does the rationale only reference facts present in the context (including ticket_summary/customer_summary if present), no invented details?
 - policy_compliance: is the campaign exactly one of the approved taxonomy names, and is execution_owner correct for the channel?
 - actionability: concrete enough for a rep to act on today, not vague?
 - non_repetition: does it avoid repeating the prior_milestone_action if that action's outcome was not positive?
 - tone: professional, no overpromising?
+- upsell_relevance: is the upsell suggestion (if any) actually grounded in the product_catalog_entry, or a reasonable "not recommended" if it doesn't fit?
 
 Context:
 {json.dumps(ctx, indent=2)}
@@ -71,11 +93,10 @@ Recommendation:
 {json.dumps(recommendation, indent=2)}
 
 Respond with ONLY valid JSON, no markdown fences, no preamble:
-{{"scores": {{"groundedness": <0-10>, "policy_compliance": <0-10>, "actionability": <0-10>, "non_repetition": <0-10>, "tone": <0-10>}}, "notes": "<one short sentence>"}}"""
+{{"scores": {{"groundedness": <0-10>, "policy_compliance": <0-10>, "actionability": <0-10>, "non_repetition": <0-10>, "tone": <0-10>, "upsell_relevance": <0-10>}}, "notes": "<one short sentence>"}}"""
 
 
 def content_prompt(ctx: dict, recommendation: dict) -> str:
-    import json
     if ctx["channel"] == "Direct":
         recipient_guidance = (
             'This is a "Direct" channel customer — the email is addressed directly to the fleet operator/customer contact. '
@@ -87,8 +108,10 @@ def content_prompt(ctx: dict, recommendation: dict) -> str:
             'The email is addressed to the dealer contact, asking them to reach out to their end customer with this recommendation. '
             'recipient_role should be "Dealer".'
         )
-    return f"""You are drafting outreach content for a sales rep to use, based on an approved retention recommendation.
+    terms = ctx.get("suggested_renewal_terms", {})
+    return f"""You are the Renewal Document Agent, drafting outreach content for a sales rep based on an approved retention recommendation.
 {recipient_guidance}
+Reference the suggested renewal terms naturally in the email: a {terms.get('priceMovePct', 0)}% price move and a {terms.get('term', '12-month')} term.
 Keep the email concise (under 150 words), professional, and specific to this contract — reference real details from the context, do not invent any.
 Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
 
@@ -102,14 +125,79 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
 {{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<the full email body, plain text, no markdown>"}}"""
 
 
-async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
-    ctx = build_aggregator_context(contract, prior_trace)
+def ticket_summary_prompt(contract: dict) -> str:
+    tickets = contract.get("serviceTickets", [])
+    return f"""You are the Service Ticket Summary Agent. Given this customer-contract's service ticket history, write a concise 2-3 sentence summary covering: overall pattern (recurring issues, SLA performance), and anything notable an account manager should know before deciding on a retention action. Plain prose, no headers, no bullet points, no markdown.
+
+Equipment: {contract['equipment']['type']}, {contract['equipment']['count']} units, average age {contract['equipment']['avgAgeYears']} years.
+
+Service tickets (JSON, most recent first):
+{json.dumps(tickets, indent=2)}
+
+Respond with plain text only — the summary itself, nothing else."""
+
+
+def customer_summary_prompt(customer_id: str, customer_name: str, contracts: list[dict]) -> str:
+    summary_input = [{
+        "contract_id": c["contractId"],
+        "region": c["region"],
+        "channel": c["channel"],
+        "months_on_book": c["monthsOnBook"],
+        "contract_value_usd": c["contractValue"],
+        "margin_usd": c["margin"],
+        "risk_score": c["riskScore"],
+        "segment": c["segment"],
+        "milestone": c["bucket"],
+        "equipment_type": c["equipment"]["type"],
+    } for c in contracts]
+    return f"""You are the Customer Summary Agent. Given all of this customer's contracts, write a concise 2-3 sentence executive summary of the overall relationship: total scope, general health across contracts, and anything an account manager should keep in mind across the whole relationship (not just one contract). Plain prose, no headers, no bullet points, no markdown.
+
+Customer: {customer_name} ({customer_id}), {len(contracts)} contract(s).
+
+Contracts (JSON):
+{json.dumps(summary_input, indent=2)}
+
+Respond with plain text only — the summary itself, nothing else."""
+
+
+async def run_ticket_summary_agent(contract: dict) -> dict:
+    prompt = ticket_summary_prompt(contract)
+    try:
+        res = await call_llm(prompt)
+        text = (res["raw"] or "").strip()
+        if not text:
+            return {"status": "error", "error": "Empty response from model.", "prompt": prompt}
+        return {"status": "done", "data": remove_think(text), "prompt": prompt, "raw": res["raw"], "latencyMs": res["latencyMs"]}
+    except LLMError as err:
+        return {"status": "error", "error": str(err), "prompt": prompt}
+
+
+async def run_customer_summary_agent(customer_id: str, customer_name: str, contracts: list[dict]) -> dict:
+    prompt = customer_summary_prompt(customer_id, customer_name, contracts)
+    try:
+        res = await call_llm(prompt)
+        text = (res["raw"] or "").strip()
+        if not text:
+            return {"status": "error", "error": "Empty response from model.", "prompt": prompt}
+        return {"status": "done", "data": remove_think(text), "prompt": prompt, "raw": res["raw"], "latencyMs": res["latencyMs"]}
+    except LLMError as err:
+        return {"status": "error", "error": str(err), "prompt": prompt}
+
+
+async def run_agent_graph(
+    contract: dict,
+    prior_trace: dict | None,
+    ticket_summary: str | None,
+    customer_summary: str | None,
+    suggested_terms: dict,
+) -> dict:
+    ctx = build_aggregator_context(contract, prior_trace, ticket_summary, customer_summary, suggested_terms)
     retry_count = 0
     prior_feedback = None
     total_input_tokens = total_output_tokens = total_latency = 0
     last_recommendation = last_evaluation = None
     escalated = passed = False
-    attempts: list[dict] = []  # full prompt/response pairs, one entry per attempt
+    attempts: list[dict] = []
 
     def base_record(**overrides) -> dict:
         record = {
@@ -148,7 +236,8 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
             total_latency += rec_res["latencyMs"]
             recommendation = rec_res["parsed"] or {
                 "action": "Unparsed", "campaign": "Personal outreach call",
-                "execution_owner": "Dealer", "rationale": "Model response could not be parsed.", "confidence": 0,
+                "execution_owner": "Dealer", "rationale": "Model response could not be parsed.",
+                "upsell": "Not recommended for this account right now", "confidence": 0,
             }
             last_recommendation = recommendation
 
@@ -158,13 +247,13 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
             total_output_tokens += eval_res["outputTokens"]
             total_latency += eval_res["latencyMs"]
             evaluation = eval_res["parsed"] or {
-                "scores": {"groundedness": 0, "policy_compliance": 0, "actionability": 0, "non_repetition": 0, "tone": 0},
+                "scores": {k: 0 for k in EVAL_CRITERIA},
                 "notes": "Model response could not be parsed.",
             }
             last_evaluation = evaluation
 
             scores = evaluation.get("scores", {})
-            vals = [float(scores.get(k, 0) or 0) for k in ["groundedness", "policy_compliance", "actionability", "non_repetition", "tone"]]
+            vals = [float(scores.get(k, 0) or 0) for k in EVAL_CRITERIA]
             composite = sum(vals) / len(vals)
             policy_ok = float(scores.get("policy_compliance", 0) or 0) >= POLICY_FLOOR
             passed = policy_ok and composite >= COMPOSITE_PASS
@@ -191,13 +280,8 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
                 break
 
     except LLMError as err:
-        # A failed LLM call still produces a visible trace record (shown as
-        # "Error" in the UI) instead of the contract silently vanishing.
         return base_record(**{"error": True, "errorMessage": str(err), "escalated": False, "pass": False})
 
-    # Content generation runs once against the final recommendation (not per
-    # retry attempt) — a rep needs one draft to work from, whether the
-    # recommendation passed cleanly or was escalated for review.
     content = None
     content_error = None
     if last_recommendation:
@@ -229,15 +313,13 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
 
 
 def _build_suggested_actions(evaluation: dict | None) -> list[str]:
-    """Rule-based (no extra LLM call) guidance for the human reviewer when a
-    recommendation gets escalated — what to actually check before acting."""
-    actions = ["Manually review the draft content below before sending - automated evaluation could not reach a passing score after the retry limit."]
+    actions = ["Manually review the draft content below before sending \u2014 automated evaluation could not reach a passing score after the retry limit."]
     scores = (evaluation or {}).get("scores", {})
     if float(scores.get("policy_compliance", 10) or 0) < POLICY_FLOOR:
-        actions.append("Check the recommended action against policy manually - the automated check flagged a compliance concern.")
+        actions.append("Check the recommended action against policy manually \u2014 the automated check flagged a compliance concern.")
     if float(scores.get("groundedness", 10) or 0) < 6:
         actions.append("Verify the rationale against the customer's actual contract data before relying on it.")
     if float(scores.get("actionability", 10) or 0) < 6:
-        actions.append("Add concrete next steps yourself - the recommendation may be too vague to act on directly.")
+        actions.append("Add concrete next steps yourself \u2014 the recommendation may be too vague to act on directly.")
     actions.append("If still uncertain, escalate to the account manager per the standard action taxonomy.")
     return actions

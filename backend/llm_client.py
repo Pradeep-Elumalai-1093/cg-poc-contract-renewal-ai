@@ -8,6 +8,7 @@ import time
 import json
 import re
 import httpx
+import re
 
 LLM_TIMEOUT_SECONDS = 60.0
 
@@ -125,3 +126,7 @@ async def _call_vllm(prompt_text: str) -> tuple[str, int, int]:
     text = choices[0]["message"]["content"] if choices else ""
     usage = data.get("usage", {})
     return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
+
+def remove_think(text):
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()

@@ -3,7 +3,10 @@ In-memory data layer. No database, per the POC design — everything lives in
 process memory and resets when the server restarts.
 """
 import random
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+from rules import PRODUCT_CATALOG, compute_risk, compute_segment
 
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
@@ -33,17 +36,45 @@ FLEET_NAMES = [
     "Millbrook Cold Chain", "Nettlewood Haulage",
 ]
 
+TICKET_TYPE_WEIGHTS = ["Preventive", "Preventive", "Corrective", "Corrective", "Emergency", "Inspection"]
+PRIORITY_BY_TYPE = {
+    "Emergency": ["Critical", "Critical", "High"],
+    "Corrective": ["High", "Medium", "Medium"],
+    "Preventive": ["Low"],
+    "Inspection": ["Low"],
+}
+
 
 def _weighted_bucket() -> str:
     pool = [">90", ">90", "90", "90", "60", "60", "45", "45", "30", "30", "10", "Lost"]
     return random.choice(pool)
 
 
-def generate_contracts() -> list[dict]:
-    contracts = []
 def _contract_count_for_customer() -> int:
     # Weighted so most customers have 1 contract, some have 2, fewer have 3.
     return random.choice([1, 1, 1, 2, 2, 3])
+
+
+def _generate_service_tickets(eq_type: str) -> list[dict]:
+    failure_modes = PRODUCT_CATALOG[eq_type]["failureModes"]
+    n_tickets = random.randint(2, 6)
+    today = datetime.now(timezone.utc).date()
+    tickets = []
+    for _ in range(n_tickets):
+        ticket_type = random.choice(TICKET_TYPE_WEIGHTS)
+        priority = random.choice(PRIORITY_BY_TYPE[ticket_type])
+        days_ago = random.randint(1, 90)
+        sla_met = random.random() > (0.35 if priority in ("Critical", "High") else 0.1)
+        tickets.append({
+            "date": (today - timedelta(days=days_ago)).isoformat(),
+            "type": ticket_type,
+            "priority": priority,
+            "issue": random.choice(failure_modes),
+            "slaMet": sla_met,
+            "resolutionHours": round(random.uniform(4, 170), 1),
+        })
+    tickets.sort(key=lambda t: t["date"], reverse=True)
+    return tickets
 
 
 def generate_contracts() -> list[dict]:
@@ -52,6 +83,7 @@ def generate_contracts() -> list[dict]:
     cust_seq = 1
     name_idx = 0
     region_counts = {"NATT": 9, "ETT": 9, "APAC_TT": 7}  # customer counts per region
+    eq_types = list(PRODUCT_CATALOG.keys())
 
     for region_id, customer_count in region_counts.items():
         channels = REGIONS[region_id]["channels"]
@@ -68,17 +100,16 @@ def generate_contracts() -> list[dict]:
                 cost_to_serve = round(contract_value * cost_to_serve_ratio)
                 margin = contract_value - cost_to_serve
                 payment_lag_days = round(random.uniform(0, 55))
-                complaint_count = round(random.uniform(1, 4)) if random.random() < 0.3 else 0
-                service_trend = random.choice(["declining", "stable", "stable", "increasing"])
                 bucket = _weighted_bucket()
 
-                risk_score = (
-                    20 + payment_lag_days * 0.9 + complaint_count * 9
-                    + (22 if service_trend == "declining" else -8 if service_trend == "increasing" else 0)
-                    - (8 if months_on_book > 30 else 0)
-                )
-                risk_score = max(4, min(97, round(risk_score)))
-                risk_tier = "High" if risk_score >= 66 else "Medium" if risk_score >= 38 else "Low"
+                eq_type = random.choice(eq_types)
+                equipment = {
+                    "type": eq_type,
+                    "count": random.randint(1, 12),
+                    "avgAgeYears": round(random.uniform(1, 16), 1),
+                    "critical": random.random() < 0.4,
+                }
+                service_tickets = _generate_service_tickets(eq_type)
 
                 contracts.append({
                     "contractId": f"CT-{seq:04d}",
@@ -92,16 +123,37 @@ def generate_contracts() -> list[dict]:
                     "costToServe": cost_to_serve,
                     "margin": margin,
                     "paymentLagDays": payment_lag_days,
-                    "complaintCount": complaint_count,
-                    "serviceTrend": service_trend,
+                    "equipment": equipment,
+                    "serviceTickets": service_tickets,
+                    "pmCompletionRate": round(random.uniform(0.40, 0.95), 2),
+                    "latePaymentsCount": round(random.uniform(0, 5)) if random.random() < 0.5 else 0,
+                    "outstandingBalance": round(contract_value * random.uniform(0, 0.15)) if random.random() < 0.4 else 0,
+                    "competitorBidReceived": random.random() < 0.35,
+                    "npsScore": random.randint(0, 10),
+                    "portalLogins": random.randint(0, 14),
+                    "lastExecTouchpointDaysAgo": random.randint(10, 400),
+                    "lastPriceIncreasePct": round(random.uniform(0.0, 0.20), 3),
                     "bucket": bucket,
                     "lastMilestoneProcessed": None,
-                    "riskScore": risk_score,
-                    "riskTier": risk_tier,
+                    # riskScore / riskFactors / segment are assigned in a
+                    # second pass below, once the book's median margin is known.
+                    "riskScore": None,
+                    "riskFactors": None,
+                    "segment": None,
                 })
                 seq += 1
             cust_seq += 1
             name_idx += 1
+
+    # Second pass: risk score is independent per contract, but segment needs
+    # the book-wide median margin, so compute that only after all contracts exist.
+    median_margin = sorted(c["margin"] for c in contracts)[len(contracts) // 2]
+    for c in contracts:
+        score, factors = compute_risk(c)
+        c["riskScore"] = score
+        c["riskFactors"] = factors
+        c["segment"] = compute_segment(score, c["margin"], median_margin)
+
     return contracts
 
 
@@ -113,14 +165,23 @@ class AppState:
         self.contracts: list[dict] = generate_contracts()
         self.trace: list[dict] = []
         self.batch_status: dict = {"running": False, "done": 0, "total": 0, "lastError": None}
+        # Pre-computed, cached-on-demand agents — keyed by id, not tied to a
+        # milestone run, per the "runs beforehand" design.
+        self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
+        self.customer_summaries: dict = {}  # customerId -> {status, data, error}
 
     def reset(self):
         self.contracts = generate_contracts()
         self.trace = []
         self.batch_status = {"running": False, "done": 0, "total": 0, "lastError": None}
+        self.ticket_summaries = {}
+        self.customer_summaries = {}
 
     def contract_by_id(self, contract_id: str) -> Optional[dict]:
         return next((c for c in self.contracts if c["contractId"] == contract_id), None)
+
+    def contracts_for_customer(self, customer_id: str) -> list[dict]:
+        return [c for c in self.contracts if c["customerId"] == customer_id]
 
     def latest_trace_for(self, contract_id: str) -> Optional[dict]:
         for record in reversed(self.trace):

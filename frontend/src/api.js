@@ -26,5 +26,13 @@ export const api = {
     request("/api/feedback", { method: "POST", body: JSON.stringify({ contractId, outcome, note }) }),
   setActionStatus: (contractId, actionStatus) =>
     request("/api/action-status", { method: "POST", body: JSON.stringify({ contractId, actionStatus }) }),
+  getModelInfo: () => request("/api/model-info"),
+  getTicketSummaries: () => request("/api/ticket-summaries"),
+  runTicketSummary: (contractId) =>
+    request("/api/ticket-summaries/run", { method: "POST", body: JSON.stringify({ contractId }) }),
+  getCustomerSummaries: () => request("/api/customer-summaries"),
+  runCustomerSummary: (customerId) =>
+    request("/api/customer-summaries/run", { method: "POST", body: JSON.stringify({ customerId }) }),
+  getOutcomeByRiskBucket: () => request("/api/outcome-by-risk-bucket"),
   reset: () => request("/api/reset", { method: "POST" }),
 };
