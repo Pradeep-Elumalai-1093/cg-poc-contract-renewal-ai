@@ -81,6 +81,7 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
     total_input_tokens = total_output_tokens = total_latency = 0
     last_recommendation = last_evaluation = None
     escalated = passed = False
+    attempts: list[dict] = []  # full prompt/response pairs, one entry per attempt
 
     def base_record(**overrides) -> dict:
         record = {
@@ -92,6 +93,7 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
             "context": ctx,
             "recommendation": last_recommendation,
             "evaluation": last_evaluation,
+            "attempts": attempts,
             "retryCount": min(retry_count, MAX_RETRIES),
             "escalated": escalated,
             "pass": passed,
@@ -109,7 +111,8 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
 
     try:
         while retry_count <= MAX_RETRIES:
-            rec_res = await call_llm(recommendation_prompt(ctx, prior_feedback))
+            rec_prompt = recommendation_prompt(ctx, prior_feedback)
+            rec_res = await call_llm(rec_prompt)
             total_input_tokens += rec_res["inputTokens"]
             total_output_tokens += rec_res["outputTokens"]
             total_latency += rec_res["latencyMs"]
@@ -119,7 +122,8 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
             }
             last_recommendation = recommendation
 
-            eval_res = await call_llm(evaluation_prompt(ctx, recommendation))
+            eval_prompt = evaluation_prompt(ctx, recommendation)
+            eval_res = await call_llm(eval_prompt)
             total_input_tokens += eval_res["inputTokens"]
             total_output_tokens += eval_res["outputTokens"]
             total_latency += eval_res["latencyMs"]
@@ -136,6 +140,17 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
             passed = policy_ok and composite >= COMPOSITE_PASS
             evaluation["composite"] = round(composite, 1)
             evaluation["pass"] = passed
+
+            attempts.append({
+                "attemptNumber": retry_count + 1,
+                "recommendationPrompt": rec_prompt,
+                "recommendationRaw": rec_res["raw"],
+                "recommendationLatencyMs": rec_res["latencyMs"],
+                "evaluationPrompt": eval_prompt,
+                "evaluationRaw": eval_res["raw"],
+                "evaluationLatencyMs": eval_res["latencyMs"],
+                "passed": passed,
+            })
 
             if passed:
                 break

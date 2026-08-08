@@ -94,6 +94,62 @@ function StatBlock({ label, value, sub, accent }) {
   );
 }
 
+function ExchangeBlock({ label, prompt, raw, latencyMs }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, border: "none", background: "none",
+          cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 600, color: T.info,
+        }}
+      >
+        <ChevronRight size={13} style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.12s" }} />
+        {label} {latencyMs != null && <span style={{ color: T.inkFaint, fontWeight: 400 }}>({latencyMs}ms)</span>}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 3 }}>Prompt sent</div>
+          <pre style={{
+            fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word",
+            background: T.surfaceSunken, border: `1px solid ${T.border}`, borderRadius: 6, padding: 10, maxHeight: 220, overflowY: "auto", margin: 0,
+          }}>{prompt}</pre>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.3, margin: "8px 0 3px" }}>Raw model response</div>
+          <pre style={{
+            fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word",
+            background: "#101418", color: "#D7DDE5", borderRadius: 6, padding: 10, maxHeight: 220, overflowY: "auto", margin: 0,
+          }}>{raw}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentInspector({ attempts }) {
+  if (!attempts || attempts.length === 0) return null;
+  return (
+    <>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
+        Inspect LLM exchange
+      </div>
+      <Card style={{ padding: 14, marginBottom: 14 }}>
+        {attempts.map((a) => (
+          <div key={a.attemptNumber} style={{ paddingBottom: 12, marginBottom: 12, borderBottom: attempts.length > 1 ? `1px solid ${T.border}` : "none" }}>
+            {attempts.length > 1 && (
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                Attempt {a.attemptNumber} {a.passed ? <Badge text="Passed" color={T.safe} bg={T.safeBg} /> : <Badge text="Retried" color={T.amber} bg={T.amberBg} />}
+              </div>
+            )}
+            <ExchangeBlock label="Recommendation agent call" prompt={a.recommendationPrompt} raw={a.recommendationRaw} latencyMs={a.recommendationLatencyMs} />
+            <ExchangeBlock label="Evaluation agent call" prompt={a.evaluationPrompt} raw={a.evaluationRaw} latencyMs={a.evaluationLatencyMs} />
+          </div>
+        ))}
+      </Card>
+    </>
+  );
+}
+
 /* ---------------------------------------------------------------
    MAIN APP
    All data manipulation and AI orchestration now happens in FastAPI.
@@ -376,7 +432,7 @@ export default function ContractRenewalPOC() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
             <Card><StatBlock label="First-pass rate" value={`${metrics.firstPassRate}%`} sub="passed with 0 retries" /></Card>
-            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${MAX_RETRIES}`} /></Card>
+            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${2}`} /></Card>
             <Card><StatBlock label="Escalation rate" value={`${metrics.escalationRate}%`} sub="sent to human review" accent={metrics.escalationRate > 0 ? T.risk : T.ink} /></Card>
             <Card><StatBlock label="Avg. latency" value={`${metrics.avgLatency}ms`} sub="per contract-milestone" /></Card>
             <Card><StatBlock label="Est. token cost" value={`$${metrics.totalCost.toFixed(3)}`} sub="cumulative, this session" /></Card>
@@ -516,6 +572,8 @@ export default function ContractRenewalPOC() {
                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Coins size={12} /> ${selectedTrace.costUsd.toFixed(4)}</span>
                   </div>
                 </Card>
+
+                <AgentInspector attempts={selectedTrace.attempts} />
 
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Log outcome</div>
                 <Card style={{ padding: 14 }}>

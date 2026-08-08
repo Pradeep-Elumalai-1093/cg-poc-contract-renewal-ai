@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "command": "npm run dev",
+            "name": "UI 5173",
+            "cwd": "${workspaceFolder}/frontend/",
+            "request": "launch",
+            "type": "node-terminal"
+        },
+        {
+            "name": "FastAPI 8080",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "cwd": "${workspaceFolder}/backend/",
+            "args": [
+                "main:app",
+                "--port", 
+                "8080",
+                "--reload"
+                
+            ],
+            "jinja": true
+        }
+    ]
+}
