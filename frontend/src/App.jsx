@@ -704,7 +704,7 @@ export default function ContractRenewalPOC() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
             <Card><StatBlock label="First-pass rate" value={`${metrics.firstPassRate}%`} sub="passed with 0 retries" /></Card>
-            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${MAX_RETRIES}`} /></Card>
+            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${2}`} /></Card>
             <Card><StatBlock label="Escalation rate" value={`${metrics.escalationRate}%`} sub="sent to human review" accent={metrics.escalationRate > 0 ? T.risk : T.ink} /></Card>
             <Card><StatBlock label="Avg. latency" value={`${metrics.avgLatency}ms`} sub="per contract-milestone" /></Card>
             <Card><StatBlock label="Est. token cost" value={`$${metrics.totalCost.toFixed(3)}`} sub="cumulative, this session" /></Card>
@@ -828,19 +828,19 @@ export default function ContractRenewalPOC() {
             <RiskFactorBreakdown factors={selectedContract.riskFactors} />
 
             <CachedAgentCard
-              title="Service Ticket Summary Agent"
-              record={ticketSummaries[selectedContract.contractId]}
-              onGenerate={() => runTicketSummary(selectedContract.contractId)}
-              loadingLabel="Reading service ticket history"
-              placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent."
-            />
-
-            <CachedAgentCard
-              title="Customer Summary Agent"
+              title="Customer Summary (AI Generated)"
               record={customerSummaries[selectedContract.customerId]}
               onGenerate={() => runCustomerSummary(selectedContract.customerId)}
               loadingLabel="Reading full customer relationship"
-              placeholderLabel="Synthesizes this customer's entire portfolio (all contracts) into one relationship summary."
+              placeholderLabel="Synthesizes this customer's entire portfolio (all contracts) into one relationship summary. Generated automatically during the next batch run if you skip this."
+            />
+
+            <CachedAgentCard
+              title="Service Ticket Summary (AI Generated)"
+              record={ticketSummaries[selectedContract.contractId]}
+              onGenerate={() => runTicketSummary(selectedContract.contractId)}
+              loadingLabel="Reading service ticket history"
+              placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent. Generated automatically during the next batch run if you skip this."
             />
 
             {!selectedTrace && (

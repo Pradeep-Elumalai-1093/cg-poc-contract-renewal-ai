@@ -110,6 +110,49 @@ async def run_batch():
     return {"started": True, "due": len(due)}
 
 
+# Per-entity locks so, if two contracts for the same customer are processed
+# concurrently in the same batch, only one of them actually generates the
+# shared customer summary instead of duplicating the LLM call.
+_ticket_locks: dict[str, asyncio.Lock] = {}
+_customer_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(store: dict, key: str) -> asyncio.Lock:
+    if key not in store:
+        store[key] = asyncio.Lock()
+    return store[key]
+
+
+async def _ensure_ticket_summary(contract: dict) -> str | None:
+    """Returns the cached summary text, generating it first if missing.
+    A prior manual 'Generate' click in the UI means this is a no-op here."""
+    from agents import run_ticket_summary_agent
+
+    async with _lock_for(_ticket_locks, contract["contractId"]):
+        existing = state.ticket_summaries.get(contract["contractId"])
+        if not existing or existing.get("status") != "done":
+            state.ticket_summaries[contract["contractId"]] = {"status": "loading"}
+            result = await run_ticket_summary_agent(contract)
+            state.ticket_summaries[contract["contractId"]] = result
+    record = state.ticket_summaries.get(contract["contractId"])
+    return record["data"] if record and record.get("status") == "done" else None
+
+
+async def _ensure_customer_summary(contract: dict) -> str | None:
+    from agents import run_customer_summary_agent
+
+    customer_id = contract["customerId"]
+    async with _lock_for(_customer_locks, customer_id):
+        existing = state.customer_summaries.get(customer_id)
+        if not existing or existing.get("status") != "done":
+            state.customer_summaries[customer_id] = {"status": "loading"}
+            contracts = state.contracts_for_customer(customer_id)
+            result = await run_customer_summary_agent(customer_id, contract["customerName"], contracts)
+            state.customer_summaries[customer_id] = result
+    record = state.customer_summaries.get(customer_id)
+    return record["data"] if record and record.get("status") == "done" else None
+
+
 async def _process_batch(due: list[dict]):
     from agents import run_agent_graph  # local import avoids a circular import at module load
 
@@ -118,10 +161,11 @@ async def _process_batch(due: list[dict]):
     async def process(contract: dict):
         async with semaphore:
             prior = state.latest_trace_for(contract["contractId"])
-            ticket_summary_record = state.ticket_summaries.get(contract["contractId"])
-            ticket_summary = ticket_summary_record["data"] if ticket_summary_record and ticket_summary_record["status"] == "done" else None
-            customer_summary_record = state.customer_summaries.get(contract["customerId"])
-            customer_summary = customer_summary_record["data"] if customer_summary_record and customer_summary_record["status"] == "done" else None
+            # Generate ticket/customer summaries now if they weren't already
+            # produced ahead of time via the manual buttons — the batch
+            # should never silently proceed with "Not yet generated."
+            ticket_summary = await _ensure_ticket_summary(contract)
+            customer_summary = await _ensure_customer_summary(contract)
             terms = suggested_renewal_terms(contract)
 
             result = await run_agent_graph(contract, prior, ticket_summary, customer_summary, terms)
