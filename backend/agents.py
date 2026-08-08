@@ -231,13 +231,13 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
 def _build_suggested_actions(evaluation: dict | None) -> list[str]:
     """Rule-based (no extra LLM call) guidance for the human reviewer when a
     recommendation gets escalated — what to actually check before acting."""
-    actions = ["Manually review the draft content below before sending \u2014 automated evaluation could not reach a passing score after the retry limit."]
+    actions = ["Manually review the draft content below before sending - automated evaluation could not reach a passing score after the retry limit."]
     scores = (evaluation or {}).get("scores", {})
     if float(scores.get("policy_compliance", 10) or 0) < POLICY_FLOOR:
-        actions.append("Check the recommended action against policy manually \u2014 the automated check flagged a compliance concern.")
+        actions.append("Check the recommended action against policy manually - the automated check flagged a compliance concern.")
     if float(scores.get("groundedness", 10) or 0) < 6:
         actions.append("Verify the rationale against the customer's actual contract data before relying on it.")
     if float(scores.get("actionability", 10) or 0) < 6:
-        actions.append("Add concrete next steps yourself \u2014 the recommendation may be too vague to act on directly.")
+        actions.append("Add concrete next steps yourself - the recommendation may be too vague to act on directly.")
     actions.append("If still uncertain, escalate to the account manager per the standard action taxonomy.")
     return actions
