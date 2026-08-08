@@ -313,6 +313,30 @@ function CachedAgentCard({ title, record, onGenerate, loadingLabel, placeholderL
   );
 }
 
+function SegmentBar({ counts }) {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
+  const order = ["High Risk", "At Risk", "Healthy", "Standard"];
+  return (
+    <div>
+      <div style={{ display: "flex", height: 10, borderRadius: 5, overflow: "hidden" }}>
+        {order.map((seg) => {
+          const pct = (counts[seg] / total) * 100;
+          if (pct === 0) return null;
+          return <div key={seg} title={`${seg}: ${counts[seg]}`} style={{ width: `${pct}%`, background: SEGMENT_COLOR[seg] }} />;
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+        {order.map((seg) => (
+          <span key={seg} style={{ fontSize: 10.5, color: T.inkMuted, display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 2, background: SEGMENT_COLOR[seg], display: "inline-block" }} />
+            {seg} {counts[seg]}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OutcomeBucketChart({ data }) {
   const max = Math.max(...data.engaged, ...data.notEngaged, 1);
   return (
@@ -379,6 +403,7 @@ export default function ContractRenewalPOC() {
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
   const [outcomeByRiskBucket, setOutcomeByRiskBucket] = useState(null);
+  const [regionSummary, setRegionSummary] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [bucketFilter, setBucketFilter] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -389,12 +414,14 @@ export default function ContractRenewalPOC() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [c, t, m, cs, mi, ts, cust, obr] = await Promise.all([
+      const [c, t, m, cs, mi, ts, cust, obr, rs] = await Promise.all([
         api.getContracts(), api.getTrace(), api.getMetrics(), api.getCampaigns(),
         api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(), api.getOutcomeByRiskBucket(),
+        api.getRegionSummary(),
       ]);
       setContracts(c); setTrace(t); setMetrics(m); setCampaignSummary(cs);
       setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust); setOutcomeByRiskBucket(obr);
+      setRegionSummary(rs);
     } catch (e) {
       setApiError(String(e.message || e));
     }
@@ -588,6 +615,7 @@ export default function ContractRenewalPOC() {
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
         <button className={`tabbtn ${tab === "campaigns" ? "active" : ""}`} onClick={() => setTab("campaigns")}>Campaigns</button>
+        <button className={`tabbtn ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>Global &amp; Regions</button>
       </div>
 
       {tab === "dashboard" && (
@@ -813,6 +841,46 @@ export default function ContractRenewalPOC() {
             );
           })}
         </div>
+      )}
+
+      {tab === "summary" && regionSummary && (
+        <>
+          <Card style={{ padding: 18, marginBottom: 16 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>Global</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
+              <StatBlock label="Customers" value={regionSummary.global.customerCount} />
+              <StatBlock label="Contracts" value={regionSummary.global.contractCount} />
+              <StatBlock label="Total value" value={`$${(regionSummary.global.totalValue / 1000).toFixed(0)}k`} />
+              <StatBlock label="Total margin" value={`$${(regionSummary.global.totalMargin / 1000).toFixed(0)}k`} />
+              <StatBlock label="Avg. risk score" value={regionSummary.global.avgRiskScore} />
+            </div>
+            <SegmentBar counts={regionSummary.global.segmentCounts} />
+          </Card>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+            {Object.entries(regionSummary.regions).map(([regionId, r]) => (
+              <Card key={regionId} style={{ padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>{r.label}</div>
+                    <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{regionId} \u00b7 {r.channels.join(" + ")} channel{r.channels.length > 1 ? "s" : ""}</div>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                  <StatBlock label="Customers" value={r.customerCount} />
+                  <StatBlock label="Contracts" value={r.contractCount} />
+                  <StatBlock label="Total value" value={`$${(r.totalValue / 1000).toFixed(0)}k`} />
+                  <StatBlock label="Avg. risk" value={r.avgRiskScore} />
+                </div>
+                <SegmentBar counts={r.segmentCounts} />
+                <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 12, paddingTop: 10, fontSize: 11.5, color: T.inkMuted }}>
+                  {r.bucketCounts["Lost"] > 0 && <span style={{ color: T.risk, fontWeight: 600 }}>{r.bucketCounts["Lost"]} lost \u00b7 </span>}
+                  {BUCKET_LABEL["10"]}: {r.bucketCounts["10"]} \u00b7 {BUCKET_LABEL["30"]}: {r.bucketCounts["30"]}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Detail drawer */}

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from state import state, CAMPAIGN_TAXONOMY
+from state import state, CAMPAIGN_TAXONOMY, REGIONS, BUCKETS
 from rules import MODEL_INFO, suggested_renewal_terms
 
 app = FastAPI(title="Contract Renewal POC")
@@ -214,6 +214,35 @@ def reset_state():
 @app.get("/api/model-info")
 def get_model_info():
     return MODEL_INFO
+
+
+def _aggregate(contracts: list[dict]) -> dict:
+    n = len(contracts) or 1
+    customer_ids = {c["customerId"] for c in contracts}
+    segment_counts = {"High Risk": 0, "At Risk": 0, "Healthy": 0, "Standard": 0}
+    bucket_counts = {b: 0 for b in BUCKETS}
+    for c in contracts:
+        segment_counts[c["segment"]] = segment_counts.get(c["segment"], 0) + 1
+        bucket_counts[c["bucket"]] = bucket_counts.get(c["bucket"], 0) + 1
+    return {
+        "customerCount": len(customer_ids),
+        "contractCount": len(contracts),
+        "totalValue": sum(c["contractValue"] for c in contracts),
+        "totalMargin": sum(c["margin"] for c in contracts),
+        "avgRiskScore": round(sum(c["riskScore"] for c in contracts) / n, 1) if contracts else 0,
+        "segmentCounts": segment_counts,
+        "bucketCounts": bucket_counts,
+    }
+
+
+@app.get("/api/region-summary")
+def get_region_summary():
+    global_summary = _aggregate(state.contracts)
+    region_summaries = {}
+    for region_id, meta in REGIONS.items():
+        region_contracts = [c for c in state.contracts if c["region"] == region_id]
+        region_summaries[region_id] = {"label": meta["label"], "channels": meta["channels"], **_aggregate(region_contracts)}
+    return {"global": global_summary, "regions": region_summaries}
 
 
 @app.get("/api/ticket-summaries")
