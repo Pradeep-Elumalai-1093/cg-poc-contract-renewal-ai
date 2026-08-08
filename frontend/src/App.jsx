@@ -263,9 +263,23 @@ export default function ContractRenewalPOC() {
     }
   }, []);
 
-  // Initial load
+  // Initial load — also check whether a batch is already running server-side
+  // (e.g. the page was refreshed mid-run) and resume polling if so, instead
+  // of losing track of it.
   React.useEffect(() => {
-    refreshAll().then(() => setLoaded(true));
+    (async () => {
+      await refreshAll();
+      try {
+        const status = await api.getBatchStatus();
+        if (status.running) {
+          setProgress({ done: status.done, total: status.total });
+          setRunning(true);
+        }
+      } catch (e) {
+        // non-fatal — just means we can't confirm batch status on load
+      }
+      setLoaded(true);
+    })();
   }, [refreshAll]);
 
   // While a batch is running, poll status and refresh once it completes.
@@ -301,12 +315,20 @@ export default function ContractRenewalPOC() {
 
   const runBatch = useCallback(async () => {
     setApiError(null);
+    setRunning(true); // disable the button immediately, before the network round-trip completes
     try {
       const res = await api.runBatch();
       setProgress({ done: 0, total: res.due });
-      setRunning(true);
     } catch (e) {
-      setApiError(String(e.message || e));
+      const message = String(e.message || e);
+      if (message.toLowerCase().includes("already running")) {
+        // Someone else (or a prior click before this one landed) already
+        // started a batch — stay in the running state, the poll effect
+        // above will pick up real progress and clear it when done.
+      } else {
+        setApiError(message);
+        setRunning(false);
+      }
     }
   }, []);
 
@@ -328,6 +350,9 @@ export default function ContractRenewalPOC() {
   })), [contracts]);
 
   const selectedContract = contracts.find((c) => c.contractId === selected);
+  const portfolioContracts = selectedContract
+    ? contracts.filter((c) => c.customerId === selectedContract.customerId).sort((a, b) => b.riskScore - a.riskScore)
+    : [];
   const selectedTrace = selected ? traceByContract[selected] : null;
 
   const setOutcome = async (contractId, outcome, note) => {
@@ -605,7 +630,7 @@ export default function ContractRenewalPOC() {
       {/* Detail drawer */}
       {selectedContract && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(22,27,34,0.35)", display: "flex", justifyContent: "flex-end", zIndex: 50 }} onClick={() => setSelected(null)}>
-          <div style={{ width: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width: "50%", minWidth: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
               <div>
                 <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} \u00b7 {selectedContract.region}</div>
@@ -619,6 +644,34 @@ export default function ContractRenewalPOC() {
               <Badge text={BUCKET_LABEL[selectedContract.bucket]} color={T.inkMuted} bg={T.surfaceSunken} />
               <Badge text={`${selectedContract.riskTier} risk \u00b7 ${selectedContract.riskScore}`} color={RISK_TIER_COLOR[selectedContract.riskTier]} bg={selectedContract.riskTier === "High" ? T.riskBg : selectedContract.riskTier === "Medium" ? T.amberBg : T.safeBg} />
             </div>
+
+            {portfolioContracts.length > 1 && (
+              <>
+                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
+                  Customer portfolio \u2014 {portfolioContracts.length} contracts
+                </div>
+                <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
+                  <table>
+                    <thead><tr><th>Contract</th><th>Bucket</th><th>Value</th><th>Risk</th></tr></thead>
+                    <tbody>
+                      {portfolioContracts.map((pc) => (
+                        <tr
+                          key={pc.contractId}
+                          className="rowhover"
+                          style={{ cursor: "pointer", background: pc.contractId === selectedContract.contractId ? T.surfaceSunken : "transparent" }}
+                          onClick={() => setSelected(pc.contractId)}
+                        >
+                          <td style={{ fontWeight: pc.contractId === selectedContract.contractId ? 700 : 500 }}>{pc.contractId}</td>
+                          <td><Badge text={BUCKET_LABEL[pc.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
+                          <td>${pc.contractValue.toLocaleString()}</td>
+                          <td><Badge text={pc.riskTier} color={RISK_TIER_COLOR[pc.riskTier]} bg={pc.riskTier === "High" ? T.riskBg : pc.riskTier === "Medium" ? T.amberBg : T.safeBg} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              </>
+            )}
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
               <StatBlock label="Contract value" value={`$${selectedContract.contractValue.toLocaleString()}`} />

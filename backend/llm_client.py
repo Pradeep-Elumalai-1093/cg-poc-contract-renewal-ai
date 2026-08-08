@@ -17,11 +17,27 @@ class LLMError(Exception):
 
 
 def _clean_json(raw: str) -> dict | None:
-    cleaned = re.sub(r"```json|```", "", raw).strip()
+    # Reasoning models (Qwen3-Instruct and similar served through vLLM) emit
+    # a <think>...</think> block ahead of the actual answer even when told to
+    # respond with only JSON — that instruction governs the final answer, not
+    # the reasoning trace. Strip it before attempting to parse.
+    without_think = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+    cleaned = re.sub(r"```json|```", "", without_think).strip()
+
     try:
         return json.loads(cleaned)
     except (json.JSONDecodeError, TypeError):
-        return None
+        pass
+
+    # Fallback: some models still wrap the JSON in extra prose despite
+    # instructions not to. Extract the outermost {...} block and try that.
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(cleaned[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 async def call_llm(prompt_text: str) -> dict:
