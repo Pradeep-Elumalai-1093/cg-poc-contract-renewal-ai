@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from "recharts";
-import { Play, X, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
+import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
 import { api } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -30,14 +30,16 @@ const T = {
   infoBg: "#E8EFF6",
   amber: "#B8863B",
   amberBg: "#F7EFE1",
+  purple: "#5A4FB0",
+  purpleBg: "#EEECFA",
 };
 
 const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.inkFaint };
 const SEGMENT_BG = { "High Risk": T.riskBg, "At Risk": T.amberBg, "Healthy": T.safeBg, "Standard": T.surfaceSunken };
 const BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"];
 const BUCKET_LABEL = {
-  ">90": "Not yet due", "90": "\u226490 days", "60": "\u226460 days",
-  "45": "\u226445 days", "30": "\u226430 days", "10": "\u226410 days", "Lost": "Lost",
+  ">90": "Not yet due", "90": "≤90 days", "60": "≤60 days",
+  "45": "≤45 days", "30": "≤30 days", "10": "≤10 days", "Lost": "Lost",
 };
 const DUE_BUCKETS = ["90", "60", "45", "30", "10"];
 
@@ -72,6 +74,63 @@ function Card({ children, style, onClick, className }) {
       }}
     >
       {children}
+    </div>
+  );
+}
+
+function MultiSelect({ label, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const toggle = (val) => {
+    onChange(selected.includes(val) ? selected.filter((v) => v !== val) : [...selected, val]);
+  };
+
+  const buttonLabel = selected.length === 0 ? `All ${label}` : `${selected.length} of ${options.length} ${label}`;
+  const isFiltered = selected.length > 0;
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600,
+          border: `1px solid ${isFiltered ? T.ink : T.border}`, background: isFiltered ? T.surfaceSunken : T.surface,
+          color: isFiltered ? T.ink : T.inkMuted, borderRadius: 7, padding: "7px 10px", cursor: "pointer",
+        }}
+      >
+        {buttonLabel}
+        <ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.12s" }} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, background: T.surface, border: `1px solid ${T.border}`,
+          borderRadius: 8, boxShadow: "0 6px 18px rgba(22,27,34,0.12)", padding: 6, zIndex: 30, minWidth: 170,
+        }}>
+          {options.map((opt) => (
+            <label key={opt.value} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", fontSize: 12.5, cursor: "pointer", borderRadius: 5 }}>
+              <input type="checkbox" checked={selected.includes(opt.value)} onChange={() => toggle(opt.value)} />
+              {opt.label}
+            </label>
+          ))}
+          {isFiltered && (
+            <button
+              onClick={() => onChange([])}
+              style={{ width: "100%", marginTop: 4, border: "none", background: "none", color: T.info, fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: "5px 8px", textAlign: "left" }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -184,7 +243,7 @@ function EscalationPanel({ record, onToggleAction }) {
   const actionDone = record.actionStatus === "Action done";
   return (
     <>
-      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Escalation \u2014 human review needed</div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Escalation — human review needed</div>
       <Card style={{ padding: 14, marginBottom: 14, background: T.riskBg, borderColor: T.risk }}>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6, color: T.ink }}>
           {(record.suggestedActions || []).map((a, i) => <li key={i}>{a}</li>)}
@@ -222,8 +281,8 @@ function ServiceTicketHistory({ equipment, tickets }) {
       </div>
       <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
         <div style={{ padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 11.5, color: T.inkMuted, background: T.surfaceSunken }}>
-          {equipment.type} \u00b7 {equipment.count} unit{equipment.count === 1 ? "" : "s"} \u00b7 avg {equipment.avgAgeYears}y old
-          {equipment.critical && <span style={{ color: T.risk, fontWeight: 600 }}> \u00b7 Critical equipment</span>}
+          {equipment.type} · {equipment.count} unit{equipment.count === 1 ? "" : "s"} · avg {equipment.avgAgeYears}y old
+          {equipment.critical && <span style={{ color: T.risk, fontWeight: 600 }}> · Critical equipment</span>}
         </div>
         {(!tickets || tickets.length === 0) ? (
           <div style={{ padding: 16, fontSize: 12, color: T.inkFaint }}>No service tickets on record.</div>
@@ -241,7 +300,7 @@ function ServiceTicketHistory({ equipment, tickets }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontWeight: 600 }}>{t.issue}</span>
                   <span style={{ color: T.inkMuted }}>
-                    {" "}\u00b7 {t.type}{t.slaMet === false ? " \u00b7 SLA missed" : ""} \u00b7 {t.resolutionHours}h resolution
+                    {" "}· {t.type}{t.slaMet === false ? " · SLA missed" : ""} · {t.resolutionHours}h resolution
                   </span>
                 </div>
                 <Badge text={t.priority} color={PRIORITY_COLOR[t.priority] || T.inkMuted} bg={PRIORITY_BG[t.priority] || T.surfaceSunken} />
@@ -295,7 +354,7 @@ function CachedAgentCard({ title, record, onGenerate, loadingLabel, placeholderL
             <button onClick={onGenerate} style={{ marginTop: 10, border: "none", background: "none", color: T.info, fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>Regenerate</button>
           </>
         )}
-        {status === "loading" && <div style={{ fontSize: 12.5, color: T.inkFaint }}>{loadingLabel}\u2026</div>}
+        {status === "loading" && <div style={{ fontSize: 12.5, color: T.inkFaint }}>{loadingLabel}…</div>}
         {status === "error" && (
           <>
             <div style={{ fontSize: 12.5, color: T.risk, marginBottom: 8 }}>{record.error}</div>
@@ -406,6 +465,8 @@ export default function ContractRenewalPOC() {
   const [regionSummary, setRegionSummary] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [bucketFilter, setBucketFilter] = useState(null);
+  const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
+  const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
   const [selected, setSelected] = useState(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -516,22 +577,30 @@ export default function ContractRenewalPOC() {
     }
   }, []);
 
+  const filteredContracts = useMemo(() => {
+    return contracts.filter((c) => {
+      const regionOk = regionFilter.length === 0 || regionFilter.includes(c.region);
+      const channelOk = channelFilter.length === 0 || channelFilter.includes(c.channel);
+      return regionOk && channelOk;
+    });
+  }, [contracts, regionFilter, channelFilter]);
+
   const bucketCounts = useMemo(() => {
     const c = {};
     BUCKETS.forEach((b) => (c[b] = 0));
-    contracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
+    filteredContracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
     return c;
-  }, [contracts]);
+  }, [filteredContracts]);
 
   const worklist = useMemo(() => {
-    let list = contracts;
+    let list = filteredContracts;
     if (bucketFilter) list = list.filter((c) => c.bucket === bucketFilter);
     return [...list].sort((a, b) => b.riskScore - a.riskScore);
-  }, [contracts, bucketFilter]);
+  }, [filteredContracts, bucketFilter]);
 
-  const scatterData = useMemo(() => contracts.map((c) => ({
+  const scatterData = useMemo(() => filteredContracts.map((c) => ({
     x: c.monthsOnBook, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
-  })), [contracts]);
+  })), [filteredContracts]);
 
   const selectedContract = contracts.find((c) => c.contractId === selected);
   const portfolioContracts = selectedContract
@@ -567,7 +636,7 @@ export default function ContractRenewalPOC() {
   if (!loaded) {
     return (
       <div style={{ fontFamily: "-apple-system, sans-serif", background: T.bg, color: T.inkMuted, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
-        Loading contract data from the backend\u2026
+        Loading contract data from the backend…
       </div>
     );
   }
@@ -589,9 +658,9 @@ export default function ContractRenewalPOC() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation \u2014 Proof of Concept</div>
+          <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation — Proof of Concept</div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
-          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data \u2014 in-memory only \u2014 NATT \u00b7 ETT \u00b7 APAC TT</div>
+          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data — in-memory only — NATT · ETT · APAC TT</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <button
@@ -604,7 +673,7 @@ export default function ContractRenewalPOC() {
             }}
           >
             <Play size={15} fill="#fff" />
-            {running ? `Running ${progress.done}/${progress.total}\u2026` : `Run daily batch (${dueContracts.length} due)`}
+            {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
         </div>
@@ -620,6 +689,26 @@ export default function ContractRenewalPOC() {
 
       {tab === "dashboard" && (
         <>
+          {/* Global filters */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>Filters</span>
+            <MultiSelect
+              label="regions"
+              options={[{ value: "NATT", label: "NATT" }, { value: "ETT", label: "ETT" }, { value: "APAC_TT", label: "APAC-TT" }]}
+              selected={regionFilter}
+              onChange={setRegionFilter}
+            />
+            <MultiSelect
+              label="channels"
+              options={[{ value: "Dealer", label: "Dealer" }, { value: "Direct", label: "Direct" }]}
+              selected={channelFilter}
+              onChange={setChannelFilter}
+            />
+            {(regionFilter.length > 0 || channelFilter.length > 0) && (
+              <span style={{ fontSize: 11.5, color: T.inkFaint }}>{filteredContracts.length} of {contracts.length} contracts shown</span>
+            )}
+          </div>
+
           {/* Bucket cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 18 }}>
             {BUCKETS.map((b) => (
@@ -642,7 +731,7 @@ export default function ContractRenewalPOC() {
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value segmentation</div>
-              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Months on book vs. contract value \u2014 colored by risk \u00d7 value segment</div>
+              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Months on book vs. contract value — colored by risk × value segment</div>
               <ResponsiveContainer width="100%" height={280}>
                 <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
                   <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
@@ -681,9 +770,9 @@ export default function ContractRenewalPOC() {
             <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Portfolio KPIs</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <StatBlock label="At-risk contracts" value={contracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
+                <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
                 <StatBlock label="Lost" value={bucketCounts["Lost"]} sub="past expiry" accent={T.risk} />
-                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "\u2014"} sub="of logged outcomes" />
+                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
                 <StatBlock label="Recommendations run" value={metrics.totalRuns} sub={`of ${contracts.length} contracts`} />
               </div>
               <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted }}>
@@ -697,7 +786,7 @@ export default function ContractRenewalPOC() {
           {/* Worklist */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `\u2014 ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `— ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
               {bucketFilter && <button onClick={() => setBucketFilter(null)} style={{ border: "none", background: "none", fontSize: 12, color: T.info, cursor: "pointer" }}>Clear filter</button>}
             </div>
             <div style={{ maxHeight: 360, overflowY: "auto" }}>
@@ -714,7 +803,7 @@ export default function ContractRenewalPOC() {
                         <td>{c.region}</td>
                         <td>{c.channel}</td>
                         <td><Badge text={BUCKET_LABEL[c.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
-                        <td><Badge text={`${c.segment} \u00b7 ${c.riskScore}`} color={SEGMENT_COLOR[c.segment]} bg={SEGMENT_BG[c.segment]} /></td>
+                        <td><Badge text={`${c.segment} · ${c.riskScore}`} color={SEGMENT_COLOR[c.segment]} bg={SEGMENT_BG[c.segment]} /></td>
                         <td>${c.contractValue.toLocaleString()}</td>
                         <td>
                           {!t && <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>}
@@ -757,13 +846,13 @@ export default function ContractRenewalPOC() {
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign response by risk bucket</div>
               <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
-                Live signal from logged outcomes \u2014 not a validated renewal-outcome backtest, since we don't have historical renewal ground truth.
+                Live signal from logged outcomes — not a validated renewal-outcome backtest, since we don't have historical renewal ground truth.
               </div>
               {outcomeByRiskBucket && outcomeByRiskBucket.totalWithOutcome > 0 ? (
                 <OutcomeBucketChart data={outcomeByRiskBucket} />
               ) : (
                 <div style={{ fontSize: 12, color: T.inkFaint, padding: "18px 0", textAlign: "center" }}>
-                  Not enough logged outcomes yet \u2014 log a few via Feedback Logging to populate this.
+                  Not enough logged outcomes yet — log a few via Feedback Logging to populate this.
                 </div>
               )}
             </Card>
@@ -795,7 +884,7 @@ export default function ContractRenewalPOC() {
                     <tr key={r.runId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(r.contractId)}>
                       <td style={{ fontWeight: 600 }}>{contracts.find((c) => c.contractId === r.contractId)?.customerName}</td>
                       <td>{BUCKET_LABEL[r.milestone]}</td>
-                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "\u2014"}</td>
+                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "—"}</td>
                       <td>{r.retryCount}</td>
                       <td>
                         {r.error
@@ -811,7 +900,7 @@ export default function ContractRenewalPOC() {
                     </tr>
                   ))}
                   {trace.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet \u2014 run the daily batch from the Dashboard tab.</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet — run the daily batch from the Dashboard tab.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -835,7 +924,7 @@ export default function ContractRenewalPOC() {
                   <StatBlock label="Engaged" value={s.engaged} accent={T.safe} />
                 </div>
                 <div style={{ fontSize: 11.5, color: T.inkMuted }}>
-                  Response rate {responseRate}% \u00b7 Engagement rate {engagedRate}%
+                  Response rate {responseRate}% · Engagement rate {engagedRate}%
                 </div>
               </Card>
             );
@@ -863,7 +952,7 @@ export default function ContractRenewalPOC() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div>
                     <div style={{ fontSize: 13.5, fontWeight: 700 }}>{r.label}</div>
-                    <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{regionId} \u00b7 {r.channels.join(" + ")} channel{r.channels.length > 1 ? "s" : ""}</div>
+                    <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{regionId} · {r.channels.join(" + ")} channel{r.channels.length > 1 ? "s" : ""}</div>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
@@ -874,8 +963,8 @@ export default function ContractRenewalPOC() {
                 </div>
                 <SegmentBar counts={r.segmentCounts} />
                 <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 12, paddingTop: 10, fontSize: 11.5, color: T.inkMuted }}>
-                  {r.bucketCounts["Lost"] > 0 && <span style={{ color: T.risk, fontWeight: 600 }}>{r.bucketCounts["Lost"]} lost \u00b7 </span>}
-                  {BUCKET_LABEL["10"]}: {r.bucketCounts["10"]} \u00b7 {BUCKET_LABEL["30"]}: {r.bucketCounts["30"]}
+                  {r.bucketCounts["Lost"] > 0 && <span style={{ color: T.risk, fontWeight: 600 }}>{r.bucketCounts["Lost"]} lost · </span>}
+                  {BUCKET_LABEL["10"]}: {r.bucketCounts["10"]} · {BUCKET_LABEL["30"]}: {r.bucketCounts["30"]}
                 </div>
               </Card>
             ))}
@@ -889,26 +978,29 @@ export default function ContractRenewalPOC() {
           <div style={{ width: "50%", minWidth: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
               <div>
-                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} \u00b7 {selectedContract.region}</div>
+                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} · {selectedContract.region}</div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedContract.customerName}</div>
               </div>
               <button onClick={() => setSelected(null)} style={{ border: "none", background: "none", cursor: "pointer" }}><X size={18} color={T.inkFaint} /></button>
             </div>
 
             <div style={{ display: "flex", gap: 8, margin: "10px 0 16px", flexWrap: "wrap" }}>
+              {[...new Set(portfolioContracts.map((pc) => pc.region))].map((r) => (
+                <Badge key={r} text={r === "APAC_TT" ? "APAC-TT" : r} color={T.purple} bg={T.purpleBg} />
+              ))}
               <Badge text={selectedContract.channel} color={T.info} bg={T.infoBg} />
               <Badge text={BUCKET_LABEL[selectedContract.bucket]} color={T.inkMuted} bg={T.surfaceSunken} />
-              <Badge text={`${selectedContract.segment} \u00b7 ${selectedContract.riskScore}`} color={SEGMENT_COLOR[selectedContract.segment]} bg={SEGMENT_BG[selectedContract.segment]} />
+              <Badge text={`${selectedContract.segment} · ${selectedContract.riskScore}`} color={SEGMENT_COLOR[selectedContract.segment]} bg={SEGMENT_BG[selectedContract.segment]} />
             </div>
 
             {portfolioContracts.length > 1 && (
               <>
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
-                  Customer portfolio \u2014 {portfolioContracts.length} contracts
+                  Customer portfolio — {portfolioContracts.length} contracts
                 </div>
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
                   <table>
-                    <thead><tr><th>Contract</th><th>Bucket</th><th>Value</th><th>Risk</th></tr></thead>
+                    <thead><tr><th>Contract</th><th>Region</th><th>Bucket</th><th>Value</th><th>Risk</th></tr></thead>
                     <tbody>
                       {portfolioContracts.map((pc) => (
                         <tr
@@ -918,6 +1010,7 @@ export default function ContractRenewalPOC() {
                           onClick={() => setSelected(pc.contractId)}
                         >
                           <td style={{ fontWeight: pc.contractId === selectedContract.contractId ? 700 : 500 }}>{pc.contractId}</td>
+                          <td><Badge text={pc.region === "APAC_TT" ? "APAC-TT" : pc.region} color={T.purple} bg={T.purpleBg} /></td>
                           <td><Badge text={BUCKET_LABEL[pc.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
                           <td>${pc.contractValue.toLocaleString()}</td>
                           <td><Badge text={pc.segment} color={SEGMENT_COLOR[pc.segment]} bg={SEGMENT_BG[pc.segment]} /></td>
@@ -969,7 +1062,7 @@ export default function ContractRenewalPOC() {
                   <span style={{ fontSize: 13, fontWeight: 700, color: T.risk }}>Run failed</span>
                 </div>
                 <div style={{ fontSize: 12.5, color: T.ink }}>{selectedTrace.errorMessage}</div>
-                <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed \u2014 it will be retried on the next batch run.</div>
+                <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed — it will be retried on the next batch run.</div>
               </Card>
             )}
 
@@ -1032,7 +1125,7 @@ export default function ContractRenewalPOC() {
                     ))}
                   </div>
                   <textarea
-                    placeholder="Optional rep note\u2026"
+                    placeholder="Optional rep note…"
                     value={selectedTrace.outcomeNote}
                     onChange={(e) => setOutcome(selectedContract.contractId, selectedTrace.outcome, e.target.value)}
                     style={{ width: "100%", minHeight: 60, border: `1px solid ${T.border}`, borderRadius: 7, padding: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }}
