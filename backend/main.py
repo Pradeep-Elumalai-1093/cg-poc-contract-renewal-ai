@@ -30,6 +30,11 @@ class FeedbackIn(BaseModel):
     note: str | None = None
 
 
+class ActionStatusIn(BaseModel):
+    contractId: str
+    actionStatus: str  # "Action required" or "Action done"
+
+
 @app.get("/api/contracts")
 def get_contracts():
     return state.contracts
@@ -127,6 +132,17 @@ def post_feedback(body: FeedbackIn):
         record["outcome"] = body.outcome
     if body.note is not None:
         record["outcomeNote"] = body.note
+    return record
+
+
+@app.post("/api/action-status")
+def post_action_status(body: ActionStatusIn):
+    record = state.latest_trace_for(body.contractId)
+    if not record:
+        raise HTTPException(status_code=404, detail="No trace record found for this contract yet.")
+    if body.actionStatus not in ("Action required", "Action done"):
+        raise HTTPException(status_code=400, detail="actionStatus must be 'Action required' or 'Action done'.")
+    record["actionStatus"] = body.actionStatus
     return record
 
 

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from "react";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from "recharts";
-import { Play, X, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins } from "lucide-react";
+import { Play, X, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
 import { api } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -125,6 +125,90 @@ function ExchangeBlock({ label, prompt, raw, latencyMs }) {
     </div>
   );
 }
+
+function DraftContent({ content, contentError }) {
+  const [copied, setCopied] = useState(false);
+
+  if (contentError) {
+    return (
+      <>
+        <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Draft content</div>
+        <Card style={{ padding: 14, marginBottom: 14, background: T.surfaceSunken }}>
+          <div style={{ fontSize: 12.5, color: T.inkFaint }}>Draft generation failed: {contentError}</div>
+        </Card>
+      </>
+    );
+  }
+  if (!content) return null;
+
+  const copyText = `Subject: ${content.email_subject}\n\n${content.email_body}`;
+  const copy = () => {
+    navigator.clipboard.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Draft content</div>
+      <Card style={{ padding: 14, marginBottom: 14 }}>
+        <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 10, lineHeight: 1.5 }}>{content.summary}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <Badge text={`Addressed to: ${content.recipient_role}`} color={T.info} bg={T.infoBg} />
+          <button
+            onClick={copy}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, border: `1px solid ${T.border}`, background: copied ? T.safeBg : "#fff",
+              color: copied ? T.safe : T.inkMuted, borderRadius: 6, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            {copied ? <ClipboardCheck size={13} /> : <Copy size={13} />}
+            {copied ? "Copied" : "Copy email"}
+          </button>
+        </div>
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 7, overflow: "hidden" }}>
+          <div style={{ background: T.surfaceSunken, padding: "7px 10px", fontSize: 12, fontWeight: 700, borderBottom: `1px solid ${T.border}` }}>
+            {content.email_subject}
+          </div>
+          <div style={{ padding: 10, fontSize: 12.5, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{content.email_body}</div>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+function EscalationPanel({ record, onToggleAction }) {
+  if (!record.escalated) return null;
+  const actionDone = record.actionStatus === "Action done";
+  return (
+    <>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Escalation \u2014 human review needed</div>
+      <Card style={{ padding: 14, marginBottom: 14, background: T.riskBg, borderColor: T.risk }}>
+        <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6, color: T.ink }}>
+          {(record.suggestedActions || []).map((a, i) => <li key={i}>{a}</li>)}
+        </ul>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid rgba(193,80,46,0.25)`, paddingTop: 10 }}>
+          <Badge
+            text={record.actionStatus}
+            color={actionDone ? T.safe : T.risk}
+            bg={actionDone ? T.safeBg : "#fff"}
+          />
+          <button
+            onClick={() => onToggleAction(record.contractId, record.actionStatus)}
+            style={{
+              border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+              background: actionDone ? T.surfaceSunken : T.ink, color: actionDone ? T.inkMuted : "#fff",
+            }}
+          >
+            {actionDone ? "Mark as not done" : "Mark action done"}
+          </button>
+        </div>
+      </Card>
+    </>
+  );
+}
+
 
 function AgentInspector({ attempts }) {
   if (!attempts || attempts.length === 0) return null;
@@ -255,6 +339,17 @@ export default function ContractRenewalPOC() {
       await api.sendFeedback(contractId, outcome, note);
       const [t, m, cs] = await Promise.all([api.getTrace(), api.getMetrics(), api.getCampaigns()]);
       setTrace(t); setMetrics(m); setCampaignSummary(cs);
+    } catch (e) {
+      setApiError(String(e.message || e));
+    }
+  };
+
+  const toggleActionStatus = async (contractId, current) => {
+    const next = current === "Action done" ? "Action required" : "Action done";
+    setTrace((prev) => prev.map((r) => (r.contractId === contractId && r === traceByContract[contractId]
+      ? { ...r, actionStatus: next } : r)));
+    try {
+      await api.setActionStatus(contractId, next);
     } catch (e) {
       setApiError(String(e.message || e));
     }
@@ -415,7 +510,14 @@ export default function ContractRenewalPOC() {
                           {!t && <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>}
                           {t && t.error && <span title={t.errorMessage}><Badge text="Error" color={T.risk} bg={T.riskBg} /></span>}
                           {t && !t.error && t.pass && !t.escalated && <Badge text="Recommended" color={T.safe} bg={T.safeBg} />}
-                          {t && !t.error && t.escalated && <Badge text="Escalated" color={T.risk} bg={T.riskBg} />}
+                          {t && !t.error && t.escalated && (
+                            <span style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                              <Badge text="Escalated" color={T.risk} bg={T.riskBg} />
+                              {t.actionStatus === "Action required"
+                                ? <Badge text="Action required" color={T.amber} bg={T.amberBg} />
+                                : <Badge text="Done" color={T.safe} bg={T.safeBg} />}
+                            </span>
+                          )}
                         </td>
                         <td><ChevronRight size={15} color={T.inkFaint} /></td>
                       </tr>
@@ -551,6 +653,8 @@ export default function ContractRenewalPOC() {
                   <div style={{ fontSize: 13 }}>{selectedTrace.recommendation?.rationale}</div>
                 </Card>
 
+                <DraftContent content={selectedTrace.content} contentError={selectedTrace.contentError} />
+
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Evaluation</div>
                 <Card style={{ padding: 14, marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -572,6 +676,8 @@ export default function ContractRenewalPOC() {
                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Coins size={12} /> ${selectedTrace.costUsd.toFixed(4)}</span>
                   </div>
                 </Card>
+
+                <EscalationPanel record={selectedTrace} onToggleAction={toggleActionStatus} />
 
                 <AgentInspector attempts={selectedTrace.attempts} />
 

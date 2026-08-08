@@ -74,6 +74,34 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
 {{"scores": {{"groundedness": <0-10>, "policy_compliance": <0-10>, "actionability": <0-10>, "non_repetition": <0-10>, "tone": <0-10>}}, "notes": "<one short sentence>"}}"""
 
 
+def content_prompt(ctx: dict, recommendation: dict) -> str:
+    import json
+    if ctx["channel"] == "Direct":
+        recipient_guidance = (
+            'This is a "Direct" channel customer — the email is addressed directly to the fleet operator/customer contact. '
+            'recipient_role should be "Customer".'
+        )
+    else:
+        recipient_guidance = (
+            'This is a "Dealer" channel customer — the sales rep does not have a direct relationship with the end customer. '
+            'The email is addressed to the dealer contact, asking them to reach out to their end customer with this recommendation. '
+            'recipient_role should be "Dealer".'
+        )
+    return f"""You are drafting outreach content for a sales rep to use, based on an approved retention recommendation.
+{recipient_guidance}
+Keep the email concise (under 150 words), professional, and specific to this contract — reference real details from the context, do not invent any.
+Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
+
+Context:
+{json.dumps(ctx, indent=2)}
+
+Approved recommendation:
+{json.dumps(recommendation, indent=2)}
+
+Respond with ONLY valid JSON, no markdown fences, no preamble:
+{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<the full email body, plain text, no markdown>"}}"""
+
+
 async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
     ctx = build_aggregator_context(contract, prior_trace)
     retry_count = 0
@@ -93,12 +121,14 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
             "context": ctx,
             "recommendation": last_recommendation,
             "evaluation": last_evaluation,
+            "content": None,
             "attempts": attempts,
             "retryCount": min(retry_count, MAX_RETRIES),
             "escalated": escalated,
             "pass": passed,
             "error": False,
             "errorMessage": None,
+            "actionStatus": "Action required",
             "latencyMs": total_latency,
             "inputTokens": total_input_tokens,
             "outputTokens": total_output_tokens,
@@ -165,4 +195,49 @@ async def run_agent_graph(contract: dict, prior_trace: dict | None) -> dict:
         # "Error" in the UI) instead of the contract silently vanishing.
         return base_record(**{"error": True, "errorMessage": str(err), "escalated": False, "pass": False})
 
-    return base_record()
+    # Content generation runs once against the final recommendation (not per
+    # retry attempt) — a rep needs one draft to work from, whether the
+    # recommendation passed cleanly or was escalated for review.
+    content = None
+    content_error = None
+    if last_recommendation:
+        try:
+            c_prompt = content_prompt(ctx, last_recommendation)
+            c_res = await call_llm(c_prompt)
+            total_input_tokens += c_res["inputTokens"]
+            total_output_tokens += c_res["outputTokens"]
+            total_latency += c_res["latencyMs"]
+            content = c_res["parsed"]
+            if content:
+                content["prompt"] = c_prompt
+                content["raw"] = c_res["raw"]
+        except LLMError as err:
+            content_error = str(err)
+
+    suggested_actions = None
+    if escalated:
+        suggested_actions = _build_suggested_actions(last_evaluation)
+
+    return base_record(
+        content=content,
+        contentError=content_error,
+        suggestedActions=suggested_actions,
+        inputTokens=total_input_tokens,
+        outputTokens=total_output_tokens,
+        latencyMs=total_latency,
+    )
+
+
+def _build_suggested_actions(evaluation: dict | None) -> list[str]:
+    """Rule-based (no extra LLM call) guidance for the human reviewer when a
+    recommendation gets escalated — what to actually check before acting."""
+    actions = ["Manually review the draft content below before sending \u2014 automated evaluation could not reach a passing score after the retry limit."]
+    scores = (evaluation or {}).get("scores", {})
+    if float(scores.get("policy_compliance", 10) or 0) < POLICY_FLOOR:
+        actions.append("Check the recommended action against policy manually \u2014 the automated check flagged a compliance concern.")
+    if float(scores.get("groundedness", 10) or 0) < 6:
+        actions.append("Verify the rationale against the customer's actual contract data before relying on it.")
+    if float(scores.get("actionability", 10) or 0) < 6:
+        actions.append("Add concrete next steps yourself \u2014 the recommendation may be too vague to act on directly.")
+    actions.append("If still uncertain, escalate to the account manager per the standard action taxonomy.")
+    return actions

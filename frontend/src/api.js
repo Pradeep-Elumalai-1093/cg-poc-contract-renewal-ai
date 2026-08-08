@@ -24,5 +24,7 @@ export const api = {
   runBatch: () => request("/api/batch/run", { method: "POST" }),
   sendFeedback: (contractId, outcome, note) =>
     request("/api/feedback", { method: "POST", body: JSON.stringify({ contractId, outcome, note }) }),
+  setActionStatus: (contractId, actionStatus) =>
+    request("/api/action-status", { method: "POST", body: JSON.stringify({ contractId, actionStatus }) }),
   reset: () => request("/api/reset", { method: "POST" }),
 };
