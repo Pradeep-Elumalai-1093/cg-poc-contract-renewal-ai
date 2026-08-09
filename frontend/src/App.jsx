@@ -477,7 +477,7 @@ export default function ContractRenewalPOC() {
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
   const [regionSummary, setRegionSummary] = useState(null);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState("dashboard");
   const [bucketFilter, setBucketFilter] = useState(null);
   const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
@@ -708,7 +708,7 @@ export default function ContractRenewalPOC() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation — Proof of Concept</div>
+          <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Carrier Global | CST Division | Art Of Possibility</div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
           <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data — in-memory only — NATT · ETT · APAC TT</div>
         </div>
@@ -731,11 +731,11 @@ export default function ContractRenewalPOC() {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
-        <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
         <button className={`tabbtn ${tab === "campaigns" ? "active" : ""}`} onClick={() => setTab("campaigns")}>Campaigns</button>
         <button className={`tabbtn ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>Global &amp; Regions</button>
+        <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
       </div>
 
       {tab === "overview" && (
