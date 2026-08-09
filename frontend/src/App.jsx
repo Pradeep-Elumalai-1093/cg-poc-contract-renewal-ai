@@ -711,8 +711,8 @@ export default function ContractRenewalPOC() {
           <img
             src="/carrier-logo.svg"
             alt="Carrier Global logo"
-            width="36"
-            height="36"
+            width="120"
+            height="50"
             style={{ flexShrink: 0, marginTop: 2, objectFit: "contain" }}
             onError={(e) => { e.currentTarget.style.display = "none"; }}
           />
