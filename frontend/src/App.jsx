@@ -707,10 +707,21 @@ export default function ContractRenewalPOC() {
 
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Carrier Global | CST Division | Art Of Possibility</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
-          <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data — in-memory only — NATT · ETT · APAC TT</div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <svg width="36" height="36" viewBox="0 0 36 36" style={{ flexShrink: 0, marginTop: 2 }} aria-label="App logo">
+            <rect width="36" height="36" rx="8" fill={T.brand} />
+            <g stroke="#fff" strokeWidth="2.2" strokeLinecap="round">
+              <line x1="18" y1="8" x2="18" y2="28" />
+              <line x1="8" y1="18" x2="28" y2="18" />
+              <line x1="11" y1="11" x2="25" y2="25" />
+              <line x1="25" y1="11" x2="11" y2="25" />
+            </g>
+          </svg>
+          <div>
+            <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Carrier Global</div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
+            <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>CST | Art Of Possibility</div>
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <button
@@ -731,11 +742,11 @@ export default function ContractRenewalPOC() {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
+        <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
         <button className={`tabbtn ${tab === "campaigns" ? "active" : ""}`} onClick={() => setTab("campaigns")}>Campaigns</button>
         <button className={`tabbtn ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>Global &amp; Regions</button>
-        <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
       </div>
 
       {tab === "overview" && (
@@ -771,11 +782,33 @@ export default function ContractRenewalPOC() {
             </ul>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Current state</div>
-            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 18px" }}>
+            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
               A working proof of concept: FastAPI backend and React frontend, in-memory synthetic data, real
               agentic LLM calls. Includes a renewal dashboard, customer/contract detail with full agent
               traceability, campaign tracking, and a global/region summary view.
             </p>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Assumptions taken</div>
+            <ul style={{ fontSize: 12.5, lineHeight: 1.65, color: T.ink, margin: "0 0 18px", paddingLeft: 20 }}>
+              <li>Unit of analysis is customer-contract, not customer alone \u2014 a customer with 3 contracts is 3 independent renewal journeys.</li>
+              <li>Renewal milestones are 90/60/45/30/10 days to expiry \u2014 not yet validated against CST's actual renewal cadence.</li>
+              <li>The 5-item retention action taxonomy is our proposal, not CST's existing playbook (none was provided).</li>
+              <li>The risk model is deliberately rule-based, not trained ML \u2014 labeled honestly as a scorecard standing in for where a real model would go.</li>
+              <li>Risk \u00d7 value segmentation thresholds (score \u226550/30, margin vs. book median) are illustrative starting points, not calibrated.</li>
+              <li>All data is synthetic \u2014 customers, contracts, service tickets, financials, and engagement signals are generated, not sourced from CST systems.</li>
+              <li>The product catalog (5 equipment types) is representative, not CST's actual catalog.</li>
+              <li>The "campaign response by risk bucket" chart is a live proxy from logged outcomes, not a validated historical renewal backtest \u2014 no ground truth exists to validate against.</li>
+              <li>Suggested renewal terms (price move %, term length) are rule-based suggestions feeding the draft email, not negotiated or approved figures.</li>
+              <li>Dealer-channel visibility is assumed limited \u2014 the system may only see what the dealer relationship exposes, not necessarily the true end customer.</li>
+              <li>No database \u2014 all state is in-memory and resets on backend restart; a POC simplification, not a production data-architecture recommendation.</li>
+              <li>Displayed cost/latency figures use a placeholder blended LLM rate, not live provider pricing.</li>
+              <li>Retry limit (2) and the policy-compliance hard-fail rule are configurable defaults, not validated thresholds.</li>
+              <li>Ticket/Customer Summary agents are cached and only regenerate on demand or when missing during a batch run, not on every milestone.</li>
+              <li>Outcome tracking uses a simplified 3-value enum (No response / Engaged / Declined) \u2014 real engagement signals (opens, clicks, replies) aren't modeled.</li>
+              <li>UI theming uses Carrier's publicly documented 2013 brand blue (#142C73); their internal system may have evolved since the 2025 identity refresh, for which exact specifications weren't available to us.</li>
+              <li>Single-process deployment (FastAPI serving the built frontend) is a demo convenience, not a production deployment recommendation.</li>
+              <li>APAC TT's dealer-only channel pattern is assumed analogous to NATT's \u2014 not confirmed by the client.</li>
+            </ul>
 
             <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted, fontStyle: "italic" }}>
               Status: proof of concept &mdash; synthetic data, rule-based scoring labeled honestly as such, real agentic pipeline.
