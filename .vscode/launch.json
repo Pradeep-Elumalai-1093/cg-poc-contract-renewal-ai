@@ -26,5 +26,15 @@
             ],
             "jinja": true
         }
+    ],
+    "compounds": [
+        {
+            "name": "Start API + UI",
+            "configurations": [
+                "UI 5173",
+                "FastAPI 8080"
+            ],
+            "stopAll": true
+        }
     ]
 }

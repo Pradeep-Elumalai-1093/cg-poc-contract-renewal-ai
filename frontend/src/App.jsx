@@ -26,12 +26,22 @@ const T = {
   riskBg: "#FBEBE5",
   safe: "#1F7A5C",
   safeBg: "#E7F3EE",
-  info: "#2B5B8C",
-  infoBg: "#E8EFF6",
+  // "info" is rebranded to Carrier's officially documented brand blue
+  // (PMS 072C / #142C73, per Carrier's 2013 Brand Identity Guidelines) —
+  // this naturally carries through to every channel badge, link, and
+  // active-state surface that already used this token.
+  info: "#142C73",
+  infoBg: "#E6E9F2",
   amber: "#B8863B",
   amberBg: "#F7EFE1",
   purple: "#5A4FB0",
   purpleBg: "#EEECFA",
+  // Explicit brand tokens for primary chrome (buttons, active tab, header
+  // accent) — same Carrier Blue, kept separate from "info" for clarity
+  // about which usages are brand-driven vs. semantic.
+  brand: "#142C73",
+  brandBg: "#E6E9F2",
+  brandLight: "#4A63A8",
 };
 
 const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.inkFaint };
@@ -103,8 +113,8 @@ function MultiSelect({ label, options, selected, onChange }) {
         onClick={() => setOpen((v) => !v)}
         style={{
           display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600,
-          border: `1px solid ${isFiltered ? T.ink : T.border}`, background: isFiltered ? T.surfaceSunken : T.surface,
-          color: isFiltered ? T.ink : T.inkMuted, borderRadius: 7, padding: "7px 10px", cursor: "pointer",
+          border: `1px solid ${isFiltered ? T.brand : T.border}`, background: isFiltered ? T.brandBg : T.surface,
+          color: isFiltered ? T.brand : T.inkMuted, borderRadius: 7, padding: "7px 10px", cursor: "pointer",
         }}
       >
         {buttonLabel}
@@ -462,7 +472,7 @@ export default function ContractRenewalPOC() {
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
   const [regionSummary, setRegionSummary] = useState(null);
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState("overview");
   const [bucketFilter, setBucketFilter] = useState(null);
   const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
@@ -676,12 +686,14 @@ export default function ContractRenewalPOC() {
 
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: T.bg, color: T.ink, minHeight: "100vh", padding: "22px 26px" }}>
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: T.bg, color: T.ink, minHeight: "100vh" }}>
+      <div style={{ height: 4, background: T.brand }} />
+      <div style={{ padding: "22px 26px" }}>
       <style>{`
         * { box-sizing: border-box; }
-        button:focus-visible, div[tabindex]:focus-visible { outline: 2px solid ${T.info}; outline-offset: 2px; }
+        button:focus-visible, div[tabindex]:focus-visible { outline: 2px solid ${T.brand}; outline-offset: 2px; }
         .tabbtn { border:none; background:transparent; padding:8px 4px; font-size:13.5px; font-weight:600; color:${T.inkFaint}; cursor:pointer; border-bottom:2px solid transparent; }
-        .tabbtn.active { color:${T.ink}; border-bottom-color:${T.ink}; }
+        .tabbtn.active { color:${T.brand}; border-bottom-color:${T.brand}; }
         .rowhover:hover { background:${T.surfaceSunken}; }
         table { border-collapse: collapse; width: 100%; }
         th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; color:${T.inkFaint}; font-weight:600; padding:8px 10px; border-bottom:1px solid ${T.border}; }
@@ -691,7 +703,7 @@ export default function ContractRenewalPOC() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation — Proof of Concept</div>
+          <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Climate Solutions Transportation — Proof of Concept</div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
           <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>Simulated data — in-memory only — NATT · ETT · APAC TT</div>
         </div>
@@ -700,7 +712,7 @@ export default function ContractRenewalPOC() {
             onClick={runBatch}
             disabled={running || dueContracts.length === 0}
             style={{
-              display: "flex", alignItems: "center", gap: 8, background: running ? T.inkFaint : T.ink, color: "#fff",
+              display: "flex", alignItems: "center", gap: 8, background: running ? T.inkFaint : T.brand, color: "#fff",
               border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600,
               cursor: running || dueContracts.length === 0 ? "default" : "pointer",
             }}
@@ -714,11 +726,58 @@ export default function ContractRenewalPOC() {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
+        <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
         <button className={`tabbtn ${tab === "campaigns" ? "active" : ""}`} onClick={() => setTab("campaigns")}>Campaigns</button>
         <button className={`tabbtn ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>Global &amp; Regions</button>
       </div>
+
+      {tab === "overview" && (
+        <div style={{ maxWidth: 760 }}>
+          <Card style={{ padding: "26px 30px", marginBottom: 18, borderTop: `3px solid ${T.brand}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>What we're building, and how</div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 14px" }}>One-page overview</h2>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>The problem</div>
+            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
+              CST renews thousands of HVAC service contracts across NATT, ETT, and APAC TT. Today, at-risk accounts
+              are identified reactively, if at all &mdash; there's no consistent process that surfaces margin, service
+              history, or engagement signals before a contract lapses, and no single system gives a rep a concrete
+              next action.
+            </p>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>What we're trying to achieve</div>
+            <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
+              <li>Proactively identify which customer-contracts are eligible for renewal or at risk of non-renewal &mdash; with clear, explainable reasoning, not a black-box score.</li>
+              <li>Recommend a concrete retention action and draft the actual outreach content a rep can send, not just a category label.</li>
+              <li>Do this consistently across every region and both dealer/direct channels, from one engine &mdash; not three separate systems.</li>
+              <li>Make every recommendation traceable and measurable: what was scored, why, what it cost, and what happened next.</li>
+            </ul>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How we're achieving it</div>
+            <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
+              <li><b>Rule-based risk scorecard</b> &mdash; 11 weighted factors (SLA breaches, payment behavior, NPS, competitor activity, and more) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product.</li>
+              <li><b>Risk &times; value segmentation</b> &mdash; crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
+              <li><b>Five-agent pipeline</b> &mdash; Ticket Summary and Customer Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
+              <li><b>Full traceability</b> &mdash; every recommendation logs its prompts, scores, retries, latency, and token cost, inspectable end to end.</li>
+              <li><b>Swappable LLM provider</b> &mdash; Claude API or a locally-hosted vLLM model, switched with one configuration change.</li>
+              <li><b>One engine, three regions</b> &mdash; NATT, ETT, and APAC TT run on the same pipeline; region and channel are configuration, not forked code.</li>
+            </ul>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Current state</div>
+            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 18px" }}>
+              A working proof of concept: FastAPI backend and React frontend, in-memory synthetic data, real
+              agentic LLM calls. Includes a renewal dashboard, customer/contract detail with full agent
+              traceability, campaign tracking, and a global/region summary view.
+            </p>
+
+            <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted, fontStyle: "italic" }}>
+              Status: proof of concept &mdash; synthetic data, rule-based scoring labeled honestly as such, real agentic pipeline.
+            </div>
+          </Card>
+        </div>
+      )}
 
       {tab === "dashboard" && (
         <>
@@ -814,6 +873,7 @@ export default function ContractRenewalPOC() {
                   : "All eligible contracts are up to date for their current milestone."}
               </div>
             </Card>
+
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign response by risk bucket</div>
               <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
@@ -873,8 +933,8 @@ export default function ContractRenewalPOC() {
             </div>
           </Card>
 
-          {/* Model info + live outcome tracking */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.3fr", gap: 16, marginTop: 16 }}>
+          {/* Model info */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
             {modelInfo && (
               <>
                 <Card style={{ padding: 16 }}>
@@ -889,7 +949,6 @@ export default function ContractRenewalPOC() {
                 </Card>
               </>
             )}
-
           </div>
         </>
       )}
@@ -898,6 +957,7 @@ export default function ContractRenewalPOC() {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
             <Card><StatBlock label="First-pass rate" value={`${metrics.firstPassRate}%`} sub="passed with 0 retries" /></Card>
+            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${MAX_RETRIES}`} /></Card>
             <Card><StatBlock label="Escalation rate" value={`${metrics.escalationRate}%`} sub="sent to human review" accent={metrics.escalationRate > 0 ? T.risk : T.ink} /></Card>
             <Card><StatBlock label="Avg. latency" value={`${metrics.avgLatency}ms`} sub="per contract-milestone" /></Card>
             <Card><StatBlock label="Est. token cost" value={`$${metrics.totalCost.toFixed(3)}`} sub="cumulative, this session" /></Card>
@@ -1169,6 +1229,7 @@ export default function ContractRenewalPOC() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

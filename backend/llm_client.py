@@ -8,7 +8,6 @@ import time
 import json
 import re
 import httpx
-import re
 
 LLM_TIMEOUT_SECONDS = 60.0
 
@@ -128,5 +127,10 @@ async def _call_vllm(prompt_text: str) -> tuple[str, int, int]:
     return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 
-def remove_think(text):
+def remove_think(text: str) -> str:
+    """Strip a reasoning model's <think>...</think> block from plain-text
+    (non-JSON) agent output — the Ticket Summary and Customer Summary agents
+    return prose, not JSON, so they never went through _clean_json's think-
+    stripping. Without this, a reasoning model's raw thinking would show up
+    in the cached summary shown to reps."""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
