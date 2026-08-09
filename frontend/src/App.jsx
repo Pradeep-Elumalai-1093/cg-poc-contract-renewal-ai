@@ -1123,6 +1123,20 @@ export default function ContractRenewalPOC() {
               <Badge text={`${selectedContract.segment} · ${selectedContract.riskScore}`} color={SEGMENT_COLOR[selectedContract.segment]} bg={SEGMENT_BG[selectedContract.segment]} />
             </div>
 
+            {selectedContract.bucket === "Lost" && selectedContract.lostReasons && selectedContract.lostReasons.length > 0 && (
+              <Card style={{ padding: 14, marginBottom: 16, background: T.riskBg, borderColor: T.risk }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: T.risk, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
+                  Reason for loss — top service issues
+                </div>
+                <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: T.ink, lineHeight: 1.6 }}>
+                  {selectedContract.lostReasons.map((reason, i) => <li key={i}>{reason}</li>)}
+                </ol>
+                <div style={{ fontSize: 10.5, color: T.inkMuted, marginTop: 8, fontStyle: "italic" }}>
+                  Rule-based, ranked by issue severity and SLA performance (not AI generated).
+                </div>
+              </Card>
+            )}
+
             {portfolioContracts.length > 1 && (
               <>
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>

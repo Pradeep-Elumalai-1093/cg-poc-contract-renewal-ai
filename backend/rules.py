@@ -9,6 +9,34 @@ honestly as such, not a trained ML model. MODEL_INFO below is the copy
 shown in the UI to describe it accurately.
 """
 
+PRIORITY_WEIGHT = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+
+
+def top_loss_reasons(tickets: list[dict], limit: int = 3) -> list[str]:
+    """Rule-based (no LLM call) prioritization of a lost contract's service
+    history into a short, explainable 'reason for loss' list. Scores each
+    distinct issue by severity and SLA performance, then returns the top N
+    issue descriptions by aggregate score \u2014 ties broken by most recent date.
+    Deliberately deterministic, matching the same design principle as the
+    risk scorecard: instant and explainable rather than LLM-generated."""
+    if not tickets:
+        return []
+
+    scored: dict[str, dict] = {}
+    for t in tickets:
+        issue = t.get("issue", "Unspecified issue")
+        weight = PRIORITY_WEIGHT.get(t.get("priority"), 1)
+        if not t.get("slaMet", True):
+            weight += 2
+        entry = scored.setdefault(issue, {"score": 0, "latestDate": t.get("date", "")})
+        entry["score"] += weight
+        if t.get("date", "") > entry["latestDate"]:
+            entry["latestDate"] = t.get("date", "")
+
+    ranked = sorted(scored.items(), key=lambda kv: (kv[1]["score"], kv[1]["latestDate"]), reverse=True)
+    return [issue for issue, _ in ranked[:limit]]
+
+
 PRODUCT_CATALOG = {
     "Reefer Unit": {
         "model": "ThermoGuard TR-500",

@@ -6,7 +6,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from rules import PRODUCT_CATALOG, compute_risk, compute_segment
+from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons
 
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
@@ -140,6 +140,10 @@ def generate_contracts() -> list[dict]:
                     "riskScore": None,
                     "riskFactors": None,
                     "segment": None,
+                    # Rule-based, not from an agent — top 3 service issues by
+                    # severity/SLA performance, shown as "reason for loss" in
+                    # the UI. Only meaningful (and only computed) for Lost contracts.
+                    "lostReasons": top_loss_reasons(service_tickets) if bucket == "Lost" else None,
                 })
                 seq += 1
             cust_seq += 1
