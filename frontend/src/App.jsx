@@ -70,6 +70,11 @@ const REGIONS = [
 // Sonnet-class blended placeholder rate, for cost estimation display only.
 const COST_PER_M_INPUT = 3.0;
 const COST_PER_M_OUTPUT = 15.0;
+
+// Display-only — must stay in sync with MAX_RETRIES in backend/agents.py,
+// which is what actually enforces the retry limit. This constant only
+// labels the "limit N" sub-text on the Trace tab's Avg. retries stat.
+const MAX_RETRIES = 2;
 /* ---------------------------------------------------------------
    SMALL UI PRIMITIVES
 ----------------------------------------------------------------*/
