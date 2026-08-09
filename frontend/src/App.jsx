@@ -708,15 +708,14 @@ export default function ContractRenewalPOC() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-          <svg width="36" height="36" viewBox="0 0 36 36" style={{ flexShrink: 0, marginTop: 2 }} aria-label="App logo">
-            <rect width="36" height="36" rx="8" fill={T.brand} />
-            <g stroke="#fff" strokeWidth="2.2" strokeLinecap="round">
-              <line x1="18" y1="8" x2="18" y2="28" />
-              <line x1="8" y1="18" x2="28" y2="18" />
-              <line x1="11" y1="11" x2="25" y2="25" />
-              <line x1="25" y1="11" x2="11" y2="25" />
-            </g>
-          </svg>
+          <img
+            src="/carrier-logo.svg"
+            alt="Carrier Global logo"
+            width="36"
+            height="36"
+            style={{ flexShrink: 0, marginTop: 2, objectFit: "contain" }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
           <div>
             <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Carrier Global</div>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
