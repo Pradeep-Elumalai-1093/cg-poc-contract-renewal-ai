@@ -207,7 +207,7 @@ function DraftContent({ content, contentError }) {
   if (contentError) {
     return (
       <>
-        <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Draft content</div>
+        <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Draft content (AI Generated)</div>
         <Card style={{ padding: 14, marginBottom: 14, background: T.surfaceSunken }}>
           <div style={{ fontSize: 12.5, color: T.inkFaint }}>Draft generation failed: {contentError}</div>
         </Card>
@@ -226,7 +226,7 @@ function DraftContent({ content, contentError }) {
 
   return (
     <>
-      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Draft content</div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Draft content (AI Generated)</div>
       <Card style={{ padding: 14, marginBottom: 14 }}>
         <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 10, lineHeight: 1.5 }}>{content.summary}</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -813,7 +813,7 @@ export default function ContractRenewalPOC() {
       </div>
 
       {tab === "overview" && (
-        <div style={{ maxWidth: 760 }}>
+        <div style={{ maxWidth: "60%"}}>
           <Card style={{ padding: "26px 30px", marginBottom: 18, borderTop: `3px solid ${T.brand}` }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>What we're building, and how</div>
             <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 14px" }}>One-page overview</h2>
@@ -1169,7 +1169,7 @@ export default function ContractRenewalPOC() {
       {/* Detail drawer */}
       {selectedContract && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(22,27,34,0.35)", display: "flex", justifyContent: "flex-end", zIndex: 50 }} onClick={() => setSelected(null)}>
-          <div style={{ width: "50%", minWidth: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width: "56%", minWidth: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
               <div>
                 <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} · {selectedContract.region}</div>
@@ -1237,8 +1237,6 @@ export default function ContractRenewalPOC() {
               <StatBlock label="Payment lag" value={`${selectedContract.paymentLagDays}d`} />
             </div>
 
-            <RiskFactorBreakdown factors={selectedContract.riskFactors} />
-
             <CachedAgentCard
               title="Customer Summary (AI Generated)"
               record={customerSummaries[selectedContract.customerId]}
@@ -1246,6 +1244,8 @@ export default function ContractRenewalPOC() {
               loadingLabel="Reading full customer relationship"
               placeholderLabel="Synthesizes this customer's entire portfolio (all contracts) into one relationship summary. Generated automatically during the next batch run if you skip this."
             />
+
+            <RiskFactorBreakdown factors={selectedContract.riskFactors} />
 
             <CachedAgentCard
               title="Service Ticket Summary (AI Generated)"
@@ -1278,7 +1278,7 @@ export default function ContractRenewalPOC() {
 
             {selectedTrace && !selectedTrace.error && (
               <>
-                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Recommendation</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Recommendation (AI Generated)</div>
                 <Card style={{ padding: 14, marginBottom: 14, background: T.surfaceSunken }}>
                   <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{selectedTrace.recommendation?.campaign}</div>
                   <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 8 }}>Owner: {selectedTrace.recommendation?.execution_owner}</div>
@@ -1292,7 +1292,7 @@ export default function ContractRenewalPOC() {
 
                 <DraftContent content={selectedTrace.content} contentError={selectedTrace.contentError} />
 
-                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Evaluation</div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>AI Result Evaluation</div>
                 <Card style={{ padding: 14, marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                     {selectedTrace.escalated
@@ -1315,8 +1315,6 @@ export default function ContractRenewalPOC() {
                 </Card>
 
                 <EscalationPanel record={selectedTrace} onToggleAction={toggleActionStatus} />
-
-                <AgentInspector attempts={selectedTrace.attempts} />
 
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Log outcome</div>
                 <Card style={{ padding: 14 }}>
@@ -1341,6 +1339,7 @@ export default function ContractRenewalPOC() {
                     style={{ width: "100%", minHeight: 60, border: `1px solid ${T.border}`, borderRadius: 7, padding: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }}
                   />
                 </Card>
+                <AgentInspector attempts={selectedTrace.attempts} />
               </>
             )}
           </div>

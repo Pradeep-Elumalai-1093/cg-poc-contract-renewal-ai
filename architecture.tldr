@@ -35,12 +35,117 @@
 	},
 	"records": [
 		{
+			"meta": {},
+			"id": "binding:rZdgpL8Fj8d14q0s4qmzO",
+			"type": "arrow",
+			"fromId": "shape:LTZjlkjWpkUWdt976N-Mx",
+			"toId": "shape:kzomqKRqUDoAqTormA4ge",
+			"props": {
+				"isPrecise": true,
+				"isExact": false,
+				"normalizedAnchor": {
+					"x": 0.1378428501999891,
+					"y": 0.4901641970136469
+				},
+				"snap": "none",
+				"terminal": "end"
+			},
+			"typeName": "binding"
+		},
+		{
 			"x": 0,
 			"y": 0,
 			"lastActivityTimestamp": 0,
 			"meta": {},
 			"id": "pointer:pointer",
 			"typeName": "pointer"
+		},
+		{
+			"x": 124.84922467133227,
+			"y": 59.990098289582875,
+			"rotation": 0,
+			"isLocked": false,
+			"opacity": 1,
+			"meta": {},
+			"id": "shape:xuJqiNhm1Y3Q9Aw0JnLoU",
+			"type": "frame",
+			"props": {
+				"w": 1122.5057474517512,
+				"h": 479.83192334800117,
+				"name": "Agent Graph",
+				"color": "black"
+			},
+			"parentId": "shape:PJG2mYE2cAKR1-OAd9LJM",
+			"index": "a1VkM",
+			"typeName": "shape"
+		},
+		{
+			"x": 400.4858883136234,
+			"y": 36.58036692557346,
+			"rotation": 0,
+			"isLocked": false,
+			"opacity": 1,
+			"meta": {},
+			"id": "shape:OSeKUqx995fmSk4-tcTFX",
+			"type": "geo",
+			"props": {
+				"w": 288.2500276541821,
+				"h": 113.23822534004546,
+				"geo": "rectangle",
+				"dash": "draw",
+				"growY": 0,
+				"url": "",
+				"scale": 1,
+				"flipX": false,
+				"flipY": false,
+				"color": "light-green",
+				"labelColor": "black",
+				"fill": "solid",
+				"size": "s",
+				"font": "sans",
+				"align": "middle",
+				"verticalAlign": "middle",
+				"richText": {
+					"type": "doc",
+					"attrs": {
+						"dir": "auto"
+					},
+					"content": [
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"marks": [
+										{
+											"type": "bold"
+										}
+									],
+									"text": "Customer Summary Agent"
+								}
+							]
+						},
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"text": "Per Customer"
+								}
+							]
+						}
+					]
+				}
+			},
+			"parentId": "shape:xuJqiNhm1Y3Q9Aw0JnLoU",
+			"index": "a2WI2",
+			"typeName": "shape"
 		},
 		{
 			"name": "",
@@ -51,9 +156,9 @@
 			"typeName": "user"
 		},
 		{
-			"x": 14.306675012782193,
-			"y": -20.554993686679836,
-			"z": 0.5288868385402536,
+			"x": -163.9352545201154,
+			"y": -623.6566416995332,
+			"z": 0.7562360895513701,
 			"meta": {},
 			"id": "camera:page:page",
 			"typeName": "camera"
@@ -81,7 +186,7 @@
 			"editingShapeId": null,
 			"croppingShapeId": null,
 			"selectedShapeIds": [
-				"shape:PJG2mYE2cAKR1-OAd9LJM"
+				"shape:LTZjlkjWpkUWdt976N-Mx"
 			],
 			"hoveredShapeId": null,
 			"erasingShapeIds": [],
@@ -102,13 +207,261 @@
 			"id": "shape:PJG2mYE2cAKR1-OAd9LJM",
 			"type": "frame",
 			"props": {
-				"w": 651.683208272344,
-				"h": 349.1610559291007,
+				"w": 1337.6441403577255,
+				"h": 596.0802338078048,
 				"name": "Application Flow - Daily Batch Run",
 				"color": "black"
 			},
 			"parentId": "page:page",
 			"index": "a3gqn",
+			"typeName": "shape"
+		},
+		{
+			"x": 17.38578817773123,
+			"y": 39.45577089395556,
+			"rotation": 0,
+			"isLocked": false,
+			"opacity": 1,
+			"meta": {},
+			"id": "shape:zmWCaEXHqILwAg4suohvm",
+			"type": "geo",
+			"props": {
+				"w": 336.73579488789215,
+				"h": 113.66425260240669,
+				"geo": "rectangle",
+				"dash": "draw",
+				"growY": 0,
+				"url": "",
+				"scale": 1,
+				"flipX": false,
+				"flipY": false,
+				"color": "light-green",
+				"labelColor": "black",
+				"fill": "solid",
+				"size": "s",
+				"font": "sans",
+				"align": "middle",
+				"verticalAlign": "middle",
+				"richText": {
+					"type": "doc",
+					"attrs": {
+						"dir": "auto"
+					},
+					"content": [
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"marks": [
+										{
+											"type": "bold"
+										}
+									],
+									"text": "Service Ticket Summary Agent"
+								}
+							]
+						},
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"text": "Per contract - customer"
+								}
+							]
+						}
+					]
+				}
+			},
+			"parentId": "shape:xuJqiNhm1Y3Q9Aw0JnLoU",
+			"index": "a1rze",
+			"typeName": "shape"
+		},
+		{
+			"x": 213.77068827146843,
+			"y": 337.2842009299578,
+			"rotation": 0,
+			"isLocked": false,
+			"opacity": 1,
+			"meta": {},
+			"id": "shape:a5nwbkebpr2BHQtlQ-FQM",
+			"type": "geo",
+			"props": {
+				"w": 242.4286747502913,
+				"h": 69.85320652761834,
+				"geo": "rectangle",
+				"dash": "draw",
+				"growY": 10.141582595916816,
+				"url": "",
+				"scale": 1,
+				"flipX": false,
+				"flipY": false,
+				"color": "orange",
+				"labelColor": "black",
+				"fill": "solid",
+				"size": "s",
+				"font": "sans",
+				"align": "middle",
+				"verticalAlign": "middle",
+				"richText": {
+					"type": "doc",
+					"attrs": {
+						"dir": "auto"
+					},
+					"content": [
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"marks": [
+										{
+											"type": "bold"
+										}
+									],
+									"text": "Evaluation Agent"
+								}
+							]
+						},
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"text": "Scoring agent result"
+								}
+							]
+						}
+					]
+				}
+			},
+			"parentId": "shape:xuJqiNhm1Y3Q9Aw0JnLoU",
+			"index": "a4sJA",
+			"typeName": "shape"
+		},
+		{
+			"x": 222.86244230187344,
+			"y": 372.3280324705439,
+			"rotation": 0,
+			"isLocked": false,
+			"opacity": 1,
+			"meta": {},
+			"id": "shape:LTZjlkjWpkUWdt976N-Mx",
+			"type": "arrow",
+			"props": {
+				"kind": "arc",
+				"elbowMidPoint": 0.5,
+				"dash": "draw",
+				"size": "s",
+				"fill": "solid",
+				"color": "orange",
+				"labelColor": "black",
+				"bend": -121.49738766125655,
+				"start": {
+					"x": 0,
+					"y": 0
+				},
+				"end": {
+					"x": 2,
+					"y": 0
+				},
+				"arrowheadStart": "none",
+				"arrowheadEnd": "arrow",
+				"richText": {
+					"type": "doc",
+					"content": [
+						{
+							"type": "paragraph"
+						}
+					]
+				},
+				"labelPosition": 0.5,
+				"font": "sans",
+				"scale": 1
+			},
+			"parentId": "shape:xuJqiNhm1Y3Q9Aw0JnLoU",
+			"index": "a5IFA",
+			"typeName": "shape"
+		},
+		{
+			"x": 212.5863043255418,
+			"y": 221.14913118214793,
+			"rotation": 0,
+			"isLocked": false,
+			"opacity": 1,
+			"meta": {},
+			"id": "shape:kzomqKRqUDoAqTormA4ge",
+			"type": "geo",
+			"props": {
+				"w": 242.4286747502913,
+				"h": 69.85320652761834,
+				"geo": "rectangle",
+				"dash": "draw",
+				"growY": 10.141582595916816,
+				"url": "",
+				"scale": 1,
+				"flipX": false,
+				"flipY": false,
+				"color": "black",
+				"labelColor": "black",
+				"fill": "none",
+				"size": "s",
+				"font": "sans",
+				"align": "middle",
+				"verticalAlign": "middle",
+				"richText": {
+					"type": "doc",
+					"attrs": {
+						"dir": "auto"
+					},
+					"content": [
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"marks": [
+										{
+											"type": "bold"
+										}
+									],
+									"text": "Recommendation Agent"
+								}
+							]
+						},
+						{
+							"type": "paragraph",
+							"attrs": {
+								"dir": "auto"
+							},
+							"content": [
+								{
+									"type": "text",
+									"text": "Deal Guidance + Upsell"
+								}
+							]
+						}
+					]
+				}
+			},
+			"parentId": "shape:xuJqiNhm1Y3Q9Aw0JnLoU",
+			"index": "a3MQE",
 			"typeName": "shape"
 		},
 		{
@@ -129,12 +482,16 @@
 			"followingUserId": null,
 			"opacityForNextShape": 1,
 			"stylesForNextShape": {
-				"tldraw:geo": "rectangle"
+				"tldraw:geo": "rectangle",
+				"tldraw:size": "s",
+				"tldraw:font": "sans",
+				"tldraw:color": "orange",
+				"tldraw:fill": "solid"
 			},
 			"brush": null,
 			"scribbles": [],
 			"cursor": {
-				"type": "move",
+				"type": "grabbing",
 				"rotation": 0
 			},
 			"isFocusMode": false,
@@ -144,8 +501,8 @@
 			"screenBounds": {
 				"x": 0,
 				"y": 0,
-				"w": 590,
-				"h": 565.3333740234375
+				"w": 750,
+				"h": 443.33331298828125
 			},
 			"insets": [
 				false,
@@ -160,7 +517,7 @@
 			"isChatting": false,
 			"highlightedUserIds": [],
 			"isFocused": true,
-			"devicePixelRatio": 1.5,
+			"devicePixelRatio": 1.2000000476837158,
 			"isCoarsePointer": false,
 			"isHoveringCanvas": true,
 			"openMenus": [],
@@ -172,6 +529,24 @@
 			"id": "instance:instance",
 			"currentPageId": "page:page",
 			"typeName": "instance"
+		},
+		{
+			"meta": {},
+			"id": "binding:qAzvw3Vcj7Ss_EJfE6OSk",
+			"type": "arrow",
+			"fromId": "shape:LTZjlkjWpkUWdt976N-Mx",
+			"toId": "shape:a5nwbkebpr2BHQtlQ-FQM",
+			"props": {
+				"isPrecise": true,
+				"isExact": false,
+				"normalizedAnchor": {
+					"x": 0.013636365149632401,
+					"y": 0.47783028032581876
+				},
+				"snap": "none",
+				"terminal": "start"
+			},
+			"typeName": "binding"
 		}
 	]
 }
