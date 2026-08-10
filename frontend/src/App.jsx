@@ -392,6 +392,80 @@ function CustomerFeedbackPanel({ feedback, trend }) {
   );
 }
 
+function PricingIntelligencePanel({ contract }) {
+  const history = contract.priceHistory || [];
+  const percentile = contract.pricePercentile || {};
+  const competitor = contract.competitorSnapshot || {};
+  const maxHistoryPrice = Math.max(1, ...history.map((h) => h.price));
+
+  return (
+    <>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
+        Pricing intelligence
+      </div>
+      <Card style={{ padding: 14, marginBottom: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <StatBlock label="Current price" value={`$${contract.contractValue.toLocaleString()}`} />
+          <StatBlock label="Margin" value={`$${contract.margin.toLocaleString()}`} />
+        </div>
+
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Historical pricing</div>
+        {history.length === 0 ? (
+          <div style={{ fontSize: 12, color: T.inkFaint, marginBottom: 14 }}>No price history on record.</div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height: 60, marginBottom: 14 }}>
+            {history.map((h, i) => {
+              const isLast = i === history.length - 1;
+              const barHeight = Math.max(6, Math.round((h.price / maxHistoryPrice) * 50));
+              return (
+                <div key={i} style={{ textAlign: "center" }}>
+                  <div style={{ width: 26, height: barHeight, background: isLast ? T.brand : T.surfaceSunken, border: isLast ? "none" : `1px solid ${T.border}`, borderRadius: "3px 3px 0 0", margin: "0 auto" }} />
+                  <div style={{ fontSize: 10, color: T.inkFaint, marginTop: 3 }}>{h.date.slice(0, 4)}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: isLast ? 700 : 500 }}>${Math.round(h.price / 1000)}k</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Similar segment pricing</div>
+        {percentile.peerCount > 0 ? (
+          <>
+            <div style={{ fontSize: 10.5, color: T.inkFaint, marginBottom: 6 }}>
+              {contract.segment} · {contract.region} · {contract.equipment.type} · {percentile.peerCount} peer{percentile.peerCount === 1 ? "" : "s"}
+            </div>
+            <div style={{ position: "relative", height: 6, background: T.surfaceSunken, borderRadius: 3, marginBottom: 4 }}>
+              <div style={{ position: "absolute", left: 0, top: 0, height: 6, width: `${percentile.percentile}%`, background: T.brand, borderRadius: 3 }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: T.inkMuted, marginBottom: 14 }}>
+              <span>${(percentile.peerMin / 1000).toFixed(0)}k</span>
+              <span style={{ fontWeight: 600, color: T.ink }}>{percentile.percentile}th percentile</span>
+              <span>${(percentile.peerMax / 1000).toFixed(0)}k</span>
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: T.inkFaint, marginBottom: 14 }}>No peers in this segment/region/equipment combination yet.</div>
+        )}
+
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Competitor pricing</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 12.5 }}>{competitor.competitorName}</span>
+          {competitor.priceDeltaPct !== 0 && (
+            <Badge
+              text={`${Math.abs(competitor.priceDeltaPct)}% ${competitor.priceDeltaPct < 0 ? "below" : "above"} us`}
+              color={competitor.priceDeltaPct < 0 ? T.risk : T.safe}
+              bg={competitor.priceDeltaPct < 0 ? T.riskBg : T.safeBg}
+            />
+          )}
+        </div>
+        {competitor.source && (
+          <div style={{ fontSize: 10.5, color: T.inkFaint, marginTop: 3 }}>Source: {competitor.source} · static v1 data, see model info</div>
+        )}
+      </Card>
+    </>
+  );
+}
+
 function RiskFactorBreakdown({ factors }) {
   if (!factors) return null;
   const entries = Object.entries(factors).sort((a, b) => b[1] - a[1]);
@@ -540,6 +614,7 @@ export default function ContractRenewalPOC() {
   const [modelInfo, setModelInfo] = useState(null);
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
+  const [pricingStrategies, setPricingStrategies] = useState({});
   const [regionSummary, setRegionSummary] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [bucketFilter, setBucketFilter] = useState(null);
@@ -553,14 +628,14 @@ export default function ContractRenewalPOC() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [c, t, m, cs, mi, ts, cust, rs] = await Promise.all([
+      const [c, t, m, cs, mi, ts, cust, rs, ps] = await Promise.all([
         api.getContracts(), api.getTrace(), api.getMetrics(), api.getCampaigns(),
         api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(),
-        api.getRegionSummary(),
+        api.getRegionSummary(), api.getPricingStrategies(),
       ]);
       setContracts(c); setTrace(t); setMetrics(m); setCampaignSummary(cs);
       setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust);
-      setRegionSummary(rs);
+      setRegionSummary(rs); setPricingStrategies(ps);
     } catch (e) {
       setApiError(String(e.message || e));
     }
@@ -583,6 +658,16 @@ export default function ContractRenewalPOC() {
       setCustomerSummaries((prev) => ({ ...prev, [customerId]: record }));
     } catch (e) {
       setCustomerSummaries((prev) => ({ ...prev, [customerId]: { status: "error", error: String(e.message || e) } }));
+    }
+  };
+
+  const runPricingStrategy = async (contractId) => {
+    setPricingStrategies((prev) => ({ ...prev, [contractId]: { status: "loading" } }));
+    try {
+      const record = await api.runPricingStrategy(contractId);
+      setPricingStrategies((prev) => ({ ...prev, [contractId]: record }));
+    } catch (e) {
+      setPricingStrategies((prev) => ({ ...prev, [contractId]: { status: "error", error: String(e.message || e) } }));
     }
   };
 
@@ -1238,6 +1323,16 @@ export default function ContractRenewalPOC() {
             </div>
 
             <RiskFactorBreakdown factors={selectedContract.riskFactors} />
+
+            <PricingIntelligencePanel contract={selectedContract} />
+
+            <CachedAgentCard
+              title="Pricing Strategy (AI Generated)"
+              record={pricingStrategies[selectedContract.contractId]}
+              onGenerate={() => runPricingStrategy(selectedContract.contractId)}
+              loadingLabel="Synthesizing pricing position"
+              placeholderLabel="Synthesizes price history, peer positioning, and competitor snapshot into a narrative. Context for the recommendation agent, not the price decision \u2014 the actual price move stays rule-based. Generated automatically during the next batch run if you skip this."
+            />
 
             <CachedAgentCard
               title="Customer Summary (AI Generated)"

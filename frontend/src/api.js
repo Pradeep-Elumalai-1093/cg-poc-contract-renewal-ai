@@ -33,6 +33,9 @@ export const api = {
   getCustomerSummaries: () => request("/api/customer-summaries"),
   runCustomerSummary: (customerId) =>
     request("/api/customer-summaries/run", { method: "POST", body: JSON.stringify({ customerId }) }),
+  getPricingStrategies: () => request("/api/pricing-strategies"),
+  runPricingStrategy: (contractId) =>
+    request("/api/pricing-strategies/run", { method: "POST", body: JSON.stringify({ contractId }) }),
   getOutcomeByRiskBucket: () => request("/api/outcome-by-risk-bucket"),
   getRegionSummary: () => request("/api/region-summary"),
   reset: () => request("/api/reset", { method: "POST" }),

@@ -2,10 +2,13 @@
 Agent graph: aggregator -> recommendation agent -> evaluation agent ->
 (retry up to MAX_RETRIES | pass | escalate) -> content agent.
 
-Two additional agents (ticket summary, customer summary) are NOT part of
-this per-milestone graph — they run on demand, cached by contract/customer
-id, and their cached output (if present) is fed into the aggregator context
-here. This keeps their cost out of the daily batch entirely.
+Three additional agents (ticket summary, customer summary, pricing strategy)
+are NOT part of this per-milestone graph — they run on demand, cached by
+contract/customer id, and their cached output (if present) is fed into the
+aggregator context here. This keeps their cost out of the daily batch
+entirely. The pricing strategy agent is context for the recommendation
+agent, not the decision-maker — it never sets the actual price move; that
+stays a deterministic rules.py output, same principle as the risk score.
 """
 import json
 import uuid
@@ -30,6 +33,7 @@ def build_aggregator_context(
     ticket_summary: str | None,
     customer_summary: str | None,
     suggested_terms: dict,
+    pricing_strategy: str | None,
 ) -> dict:
     catalog_entry = PRODUCT_CATALOG.get(contract["equipment"]["type"])
     return {
@@ -48,7 +52,12 @@ def build_aggregator_context(
         "segment": contract["segment"],
         "equipment": contract["equipment"],
         "product_catalog_entry": catalog_entry,
+        # suggested_renewal_terms is the deterministic, rules.py-owned number
+        # that actually reaches the customer — pricing_strategy below is
+        # narrative context only, it never overrides this.
         "suggested_renewal_terms": suggested_terms,
+        "price_percentile": contract.get("pricePercentile"),
+        "pricing_strategy": pricing_strategy or "Not yet generated.",
         "ticket_summary": ticket_summary or "Not yet generated.",
         "customer_summary": customer_summary or "Not yet generated.",
         "customer_feedback": _condense_feedback(contract),
@@ -89,6 +98,7 @@ If channel is "Dealer", execution_owner must be "Dealer". If channel is "Direct"
 Do not repeat an action that was already tried at a prior milestone for this same contract if it did not work.
 Use the ticket_summary and customer_summary in the context (if present) to ground your rationale in the account's actual history, not just the raw numbers.
 The context also includes customer_feedback (recent_12_months verbatim comments, a sentiment trend, and a historical_summary) \u2014 this is customer sentiment data, separate from any QA retry feedback below. If a customer explicitly praised or complained about something specific, let that shape your rationale naturally rather than writing something generic \u2014 e.g. don't recommend a pricing conversation if their recent feedback was specifically about responsiveness.
+The context also includes pricing_strategy (narrative context on peer/segment positioning and competitive pressure) and price_percentile (this contract's price rank among peers). Use these to inform your rationale if relevant \u2014 but suggested_renewal_terms is the only authoritative price move number; never propose a different price move than what it specifies.
 Only if genuinely relevant to the equipment and risk profile, suggest ONE upsell tied to this product catalog upgrade path: "{upgrade_path}". If it doesn't fit, say so plainly rather than forcing one.
 {feedback_line}
 
@@ -195,6 +205,37 @@ Contracts (JSON):
 Respond with plain text only — the summary itself, nothing else."""
 
 
+def pricing_strategy_prompt(contract: dict) -> str:
+    """Deliberately no web search or external tool access here — this agent
+    synthesizes over data already assembled by rules.py (percentile,
+    competitor snapshot, price history), it does not go fetch its own. See
+    rules.COMPETITOR_TABLE for why: B2B fleet HVAC contract pricing is
+    quoted, not published, so a web-search agent would come back empty or
+    hallucinate a plausible-sounding number with no real source."""
+    percentile = contract.get("pricePercentile", {})
+    competitor = contract.get("competitorSnapshot", {})
+    pricing_input = {
+        "current_price_usd": contract["contractValue"],
+        "margin_usd": contract["margin"],
+        "price_history": contract.get("priceHistory", []),
+        "segment": contract["segment"],
+        "region": contract["region"],
+        "equipment_type": contract["equipment"]["type"],
+        "peer_percentile": percentile.get("percentile"),
+        "peer_count": percentile.get("peerCount"),
+        "peer_price_range_usd": [percentile.get("peerMin"), percentile.get("peerMax")],
+        "competitor_snapshot": competitor,
+    }
+    return f"""You are the Pricing Strategy Agent. Given this contract's pricing history, its position relative to peers in the same segment/region/equipment group, and a competitor pricing snapshot, write a concise 2-3 sentence pricing narrative: is the current price defensible, and what should the account team keep in mind going into renewal. Plain prose, no headers, no bullet points, no markdown.
+
+You are producing context for a sales rep, not a decision \u2014 do not state a specific price move percentage or dollar figure; that comes from a separate deterministic calculation. Focus on the story: where this account sits versus peers and competitors, and why.
+
+Pricing data (JSON):
+{json.dumps(pricing_input, indent=2)}
+
+Respond with plain text only — the narrative itself, nothing else."""
+
+
 async def run_ticket_summary_agent(contract: dict) -> dict:
     prompt = ticket_summary_prompt(contract)
     try:
@@ -219,14 +260,27 @@ async def run_customer_summary_agent(customer_id: str, customer_name: str, contr
         return {"status": "error", "error": str(err), "prompt": prompt}
 
 
+async def run_pricing_strategy_agent(contract: dict) -> dict:
+    prompt = pricing_strategy_prompt(contract)
+    try:
+        res = await call_llm(prompt)
+        text = (res["raw"] or "").strip()
+        if not text:
+            return {"status": "error", "error": "Empty response from model.", "prompt": prompt}
+        return {"status": "done", "data": remove_think(text), "prompt": prompt, "raw": res["raw"], "latencyMs": res["latencyMs"]}
+    except LLMError as err:
+        return {"status": "error", "error": str(err), "prompt": prompt}
+
+
 async def run_agent_graph(
     contract: dict,
     prior_trace: dict | None,
     ticket_summary: str | None,
     customer_summary: str | None,
     suggested_terms: dict,
+    pricing_strategy: str | None,
 ) -> dict:
-    ctx = build_aggregator_context(contract, prior_trace, ticket_summary, customer_summary, suggested_terms)
+    ctx = build_aggregator_context(contract, prior_trace, ticket_summary, customer_summary, suggested_terms, pricing_strategy)
     retry_count = 0
     prior_feedback = None
     total_input_tokens = total_output_tokens = total_latency = 0

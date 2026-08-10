@@ -6,7 +6,10 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons, feedback_sentiment_trend
+from rules import (
+    PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons,
+    feedback_sentiment_trend, segment_price_percentile, COMPETITOR_TABLE,
+)
 
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
@@ -115,6 +118,25 @@ def _generate_customer_feedback(service_trend_bias: str) -> dict:
     return {"recent12Months": recent, "historical": historical}
 
 
+def _generate_price_history(current_value: float, months_on_book: int) -> list[dict]:
+    """Works backward from the current price with plausible annual increases,
+    so history is internally consistent rather than random noise \u2014 2-3
+    points depending on how long the relationship has actually run."""
+    today = datetime.now(timezone.utc).date()
+    n_points = 3 if months_on_book >= 24 else 2 if months_on_book >= 12 else 1
+    history = []
+    price = current_value
+    for i in range(n_points):
+        years_ago = i
+        history.append({
+            "date": (today.replace(year=today.year - years_ago)).isoformat(),
+            "price": round(price),
+        })
+        price = price / random.uniform(1.03, 1.09)  # each prior year was ~3-9% lower
+    history.reverse()
+    return history
+
+
 def _generate_service_tickets(eq_type: str) -> list[dict]:
     failure_modes = PRODUCT_CATALOG[eq_type]["failureModes"]
     n_tickets = random.randint(2, 6)
@@ -173,6 +195,7 @@ def generate_contracts() -> list[dict]:
                 nps_score = random.randint(0, 10)
                 feedback_bias = "declining" if nps_score <= 4 else "increasing" if nps_score >= 8 else "stable"
                 customer_feedback = _generate_customer_feedback(feedback_bias)
+                price_history = _generate_price_history(contract_value, months_on_book)
 
                 contracts.append({
                     "contractId": f"CT-{seq:04d}",
@@ -189,6 +212,7 @@ def generate_contracts() -> list[dict]:
                     "equipment": equipment,
                     "serviceTickets": service_tickets,
                     "customerFeedback": customer_feedback,
+                    "priceHistory": price_history,
                     "feedbackTrend": feedback_sentiment_trend(customer_feedback),
                     "pmCompletionRate": round(random.uniform(0.40, 0.95), 2),
                     "latePaymentsCount": round(random.uniform(0, 5)) if random.random() < 0.5 else 0,
@@ -205,6 +229,12 @@ def generate_contracts() -> list[dict]:
                     "riskScore": None,
                     "riskFactors": None,
                     "segment": None,
+                    # competitorSnapshot is keyed by segment (see COMPETITOR_TABLE),
+                    # so it's filled in the second pass right after segment is known.
+                    "competitorSnapshot": None,
+                    # pricePercentile needs every contract's segment already
+                    # assigned, so it's filled in the third pass.
+                    "pricePercentile": None,
                     # Rule-based, not from an agent — top 3 service issues by
                     # severity/SLA performance, shown as "reason for loss" in
                     # the UI. Only meaningful (and only computed) for Lost contracts.
@@ -222,6 +252,12 @@ def generate_contracts() -> list[dict]:
         c["riskScore"] = score
         c["riskFactors"] = factors
         c["segment"] = compute_segment(score, c["margin"], median_margin)
+        c["competitorSnapshot"] = COMPETITOR_TABLE[c["segment"]]
+
+    # Third pass: peer/segment price percentile needs every contract's
+    # segment already assigned, so it has to run after the second pass.
+    for c in contracts:
+        c["pricePercentile"] = segment_price_percentile(c, contracts)
 
     return contracts
 
@@ -238,6 +274,7 @@ class AppState:
         # milestone run, per the "runs beforehand" design.
         self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
         self.customer_summaries: dict = {}  # customerId -> {status, data, error}
+        self.pricing_strategies: dict = {}  # contractId -> {status, data, error}
 
     def reset(self):
         self.contracts = generate_contracts()
@@ -245,6 +282,7 @@ class AppState:
         self.batch_status = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries = {}
         self.customer_summaries = {}
+        self.pricing_strategies = {}
 
     def contract_by_id(self, contract_id: str) -> Optional[dict]:
         return next((c for c in self.contracts if c["contractId"] == contract_id), None)

@@ -38,6 +38,45 @@ def feedback_sentiment_trend(feedback: dict) -> str:
     return "Stable"
 
 
+def segment_price_percentile(contract: dict, all_contracts: list[dict]) -> dict:
+    """Where this contract's price sits among peers sharing the same segment,
+    region, and equipment type — rule-based, computed from data already in
+    memory, no new data required. This is the 'peer/segment pricing' piece;
+    see MODEL_INFO for the staged path to real ML peer-matching."""
+    peers = [
+        c for c in all_contracts
+        if c["contractId"] != contract["contractId"]
+        and c.get("segment") == contract.get("segment")
+        and c.get("region") == contract.get("region")
+        and c.get("equipment", {}).get("type") == contract.get("equipment", {}).get("type")
+    ]
+    if not peers:
+        return {"percentile": None, "peerCount": 0, "peerMin": None, "peerMax": None}
+
+    peer_values = sorted(p["contractValue"] for p in peers)
+    below = sum(1 for v in peer_values if v < contract["contractValue"])
+    percentile = round((below / len(peer_values)) * 100)
+    return {
+        "percentile": percentile,
+        "peerCount": len(peers),
+        "peerMin": peer_values[0],
+        "peerMax": peer_values[-1],
+    }
+
+
+# Stage 1 (v1, this build): static table, mirrors PRODUCT_CATALOG's pattern.
+# Stage 2: replace with a real field populated from actual CRM/rep notes when
+# a customer discloses a competing quote. Stage 3: a licensed market-pricing
+# benchmark feed. Not web search — B2B fleet HVAC contract pricing is quoted,
+# not published, so a web-search agent would come back empty or hallucinate.
+COMPETITOR_TABLE = {
+    "High Risk": {"competitorName": "ColdChain Direct", "priceDeltaPct": -8, "source": "Account review call"},
+    "At Risk": {"competitorName": "FleetTherm Services", "priceDeltaPct": -4, "source": "Renewal conversation"},
+    "Healthy": {"competitorName": "Regional independent shop", "priceDeltaPct": -2, "source": "Dealer note"},
+    "Standard": {"competitorName": "No competing bid on record", "priceDeltaPct": 0, "source": None},
+}
+
+
 
 def top_loss_reasons(tickets: list[dict], limit: int = 3) -> list[str]:
     """Rule-based (no LLM call) prioritization of a lost contract's service
@@ -217,5 +256,18 @@ MODEL_INFO = {
             "collapsed into the same 'at risk' bucket."
         ),
         "output": "segment (High Risk | At Risk | Healthy | Standard)",
+    },
+    "pricingModel": {
+        "name": "Peer/Segment Pricing Percentile",
+        "type": "Rule-based (percentile ranking within a peer group)",
+        "description": (
+            "Ranks a contract's price against peers sharing the same segment, region, and equipment "
+            "type — computed directly from contracts already in memory, no external data required. "
+            "This is a coarse bucket-based match today; the natural next step is k-nearest-neighbors "
+            "or clustering on richer features (fleet size, tenure, usage intensity) for tighter peer "
+            "groups, and true price-optimization modeling is possible only once real historical "
+            "renewal-outcome data exists to validate against — the same gap noted for the risk model."
+        ),
+        "output": "percentile (0-100), peerCount, peerMin, peerMax",
     },
 }

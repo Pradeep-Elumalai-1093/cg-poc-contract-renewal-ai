@@ -16,13 +16,16 @@
     cp .env.example .env
 
 Edit `.env`:
+- **OpenRouter (routes to Claude Sonnet 4.6, or any other model on OpenRouter):**
+  `LLM_PROVIDER=openrouter`, `OPENROUTER_API_KEY=<your key from openrouter.ai/keys>`.
+  Defaults to `OPENROUTER_MODEL=anthropic/claude-sonnet-4.6` — change this to any
+  model slug listed on openrouter.ai/models to switch models without touching code.
+- **Claude API direct:** `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=<your key>`
 - **vLLM (local model):** `LLM_PROVIDER=vllm`, `VLLM_MODEL=<exact model name>`,
   `VLLM_BASE_URL=http://localhost:8000` (or wherever vLLM is running). Launch
   vLLM separately first:
 
       python -m vllm.entrypoints.openai.api_server --model <your-model> --port 8000
-
-- **Claude API:** `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=<your key>`
 
 Start the backend (note: port 8080, not 8000 — that's usually vLLM's port):
 

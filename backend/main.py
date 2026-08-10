@@ -115,6 +115,7 @@ async def run_batch():
 # shared customer summary instead of duplicating the LLM call.
 _ticket_locks: dict[str, asyncio.Lock] = {}
 _customer_locks: dict[str, asyncio.Lock] = {}
+_pricing_locks: dict[str, asyncio.Lock] = {}
 
 
 def _lock_for(store: dict, key: str) -> asyncio.Lock:
@@ -153,6 +154,25 @@ async def _ensure_customer_summary(contract: dict) -> str | None:
     return record["data"] if record and record.get("status") == "done" else None
 
 
+async def _ensure_pricing_strategy(contract: dict) -> str | None:
+    """Same auto-fill-if-missing pattern as the other two summary agents.
+    Note: competitor positioning moves far slower than service tickets, so
+    unlike the other two, this cache is never treated as stale by anything
+    in this codebase \u2014 it's generated once and only changes on a manual
+    Regenerate click, never re-run automatically after that first fill."""
+    from agents import run_pricing_strategy_agent
+
+    contract_id = contract["contractId"]
+    async with _lock_for(_pricing_locks, contract_id):
+        existing = state.pricing_strategies.get(contract_id)
+        if not existing or existing.get("status") != "done":
+            state.pricing_strategies[contract_id] = {"status": "loading"}
+            result = await run_pricing_strategy_agent(contract)
+            state.pricing_strategies[contract_id] = result
+    record = state.pricing_strategies.get(contract_id)
+    return record["data"] if record and record.get("status") == "done" else None
+
+
 async def _process_batch(due: list[dict]):
     from agents import run_agent_graph  # local import avoids a circular import at module load
 
@@ -161,14 +181,15 @@ async def _process_batch(due: list[dict]):
     async def process(contract: dict):
         async with semaphore:
             prior = state.latest_trace_for(contract["contractId"])
-            # Generate ticket/customer summaries now if they weren't already
-            # produced ahead of time via the manual buttons — the batch
-            # should never silently proceed with "Not yet generated."
+            # Generate ticket/customer/pricing summaries now if they weren't
+            # already produced ahead of time via the manual buttons — the
+            # batch should never silently proceed with "Not yet generated."
             ticket_summary = await _ensure_ticket_summary(contract)
             customer_summary = await _ensure_customer_summary(contract)
+            pricing_strategy = await _ensure_pricing_strategy(contract)
             terms = suggested_renewal_terms(contract)
 
-            result = await run_agent_graph(contract, prior, ticket_summary, customer_summary, terms)
+            result = await run_agent_graph(contract, prior, ticket_summary, customer_summary, terms, pricing_strategy)
             state.trace.append(result)
             if result["error"]:
                 # Leave lastMilestoneProcessed untouched so this contract is
@@ -279,6 +300,24 @@ async def run_customer_summary(body: CustomerIdIn):
     state.customer_summaries[body.customerId] = {"status": "loading"}
     result = await run_customer_summary_agent(body.customerId, customer_name, contracts)
     state.customer_summaries[body.customerId] = result
+    return result
+
+
+@app.get("/api/pricing-strategies")
+def get_pricing_strategies():
+    return state.pricing_strategies
+
+
+@app.post("/api/pricing-strategies/run")
+async def run_pricing_strategy(body: ContractIdIn):
+    from agents import run_pricing_strategy_agent
+
+    contract = state.contract_by_id(body.contractId)
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found.")
+    state.pricing_strategies[body.contractId] = {"status": "loading"}
+    result = await run_pricing_strategy_agent(contract)
+    state.pricing_strategies[body.contractId] = result
     return result
 
 
