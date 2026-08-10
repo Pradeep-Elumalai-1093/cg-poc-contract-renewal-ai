@@ -51,8 +51,30 @@ def build_aggregator_context(
         "suggested_renewal_terms": suggested_terms,
         "ticket_summary": ticket_summary or "Not yet generated.",
         "customer_summary": customer_summary or "Not yet generated.",
+        "customer_feedback": _condense_feedback(contract),
         "prior_milestone_action": (prior_trace or {}).get("recommendation", {}).get("campaign") if prior_trace else None,
         "prior_milestone_outcome": (prior_trace.get("outcome") or "not yet recorded") if prior_trace else None,
+    }
+
+
+def _condense_feedback(contract: dict) -> dict:
+    """Trims raw feedback entries down to what the recommendation/content
+    prompts actually need \u2014 sentiment, category, and the verbatim comment
+    (the part that makes a reply feel personalized) \u2014 plus a one-word trend
+    and a lightweight historical summary, rather than the full dated record."""
+    feedback = contract.get("customerFeedback") or {"recent12Months": [], "historical": []}
+    recent = feedback.get("recent12Months", [])
+    historical = feedback.get("historical", [])
+    return {
+        "trend": contract.get("feedbackTrend", "No feedback on record"),
+        "recent_12_months": [
+            {"sentiment": e["sentiment"], "category": e["category"], "comment": e["comment"]}
+            for e in recent
+        ],
+        "historical_summary": (
+            f"{len(historical)} feedback entries older than 12 months on record"
+            if historical else "No feedback older than 12 months on record"
+        ),
     }
 
 
@@ -66,6 +88,7 @@ Choose exactly ONE retention action from this taxonomy: {taxonomy_names}.
 If channel is "Dealer", execution_owner must be "Dealer". If channel is "Direct", execution_owner must be "Direct Sales Rep".
 Do not repeat an action that was already tried at a prior milestone for this same contract if it did not work.
 Use the ticket_summary and customer_summary in the context (if present) to ground your rationale in the account's actual history, not just the raw numbers.
+The context also includes customer_feedback (recent_12_months verbatim comments, a sentiment trend, and a historical_summary) \u2014 this is customer sentiment data, separate from any QA retry feedback below. If a customer explicitly praised or complained about something specific, let that shape your rationale naturally rather than writing something generic \u2014 e.g. don't recommend a pricing conversation if their recent feedback was specifically about responsiveness.
 Only if genuinely relevant to the equipment and risk profile, suggest ONE upsell tied to this product catalog upgrade path: "{upgrade_path}". If it doesn't fit, say so plainly rather than forcing one.
 {feedback_line}
 
@@ -109,9 +132,21 @@ def content_prompt(ctx: dict, recommendation: dict) -> str:
             'recipient_role should be "Dealer".'
         )
     terms = ctx.get("suggested_renewal_terms", {})
+    feedback = ctx.get("customer_feedback", {})
+    recent_comments = feedback.get("recent_12_months", [])
+    feedback_guidance = (
+        "The context includes customer_feedback.recent_12_months \u2014 actual verbatim comments from this customer. "
+        "Weave in a natural acknowledgment of the most relevant one if it fits (e.g. thank them for positive feedback, "
+        "or acknowledge a specific complaint before pivoting to the offer) so the email reads as written for this "
+        "customer specifically, not a template. Don't quote a comment word-for-word or reference the survey mechanics \u2014 "
+        "paraphrase naturally, the way a rep who actually read the feedback would."
+        if recent_comments else
+        "No recent customer feedback is on record for this contract \u2014 don't reference feedback that doesn't exist."
+    )
     return f"""You are the Renewal Document Agent, drafting outreach content for a sales rep based on an approved retention recommendation.
 {recipient_guidance}
 Reference the suggested renewal terms naturally in the email: a {terms.get('priceMovePct', 0)}% price move and a {terms.get('term', '12-month')} term.
+{feedback_guidance}
 Keep the email concise (under 150 words), professional, and specific to this contract — reference real details from the context, do not invent any.
 Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
 

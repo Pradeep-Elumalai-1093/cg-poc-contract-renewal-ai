@@ -6,7 +6,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons
+from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons, feedback_sentiment_trend
 
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
@@ -44,6 +44,30 @@ PRIORITY_BY_TYPE = {
     "Inspection": ["Low"],
 }
 
+FEEDBACK_SOURCES = ["NPS Survey", "Post-Service Survey", "Account Review Call", "Renewal Conversation", "Support Ticket Follow-up"]
+FEEDBACK_POOL = {
+    "Positive": [
+        ("Service Quality", "Really happy with the response time on our last service call."),
+        ("Technician Expertise", "The technician was excellent and explained everything clearly."),
+        ("Account Relationship", "Appreciate the proactive check-ins from our account rep."),
+        ("Pricing", "Pricing feels fair for the level of service we get."),
+        ("Service Quality", "Great experience overall, would recommend to other fleet operators."),
+    ],
+    "Neutral": [
+        ("Service Quality", "Service was fine, nothing stood out either way."),
+        ("Account Relationship", "No complaints, but haven't seen much proactive outreach lately."),
+        ("Pricing", "Pricing is about what we expected, similar to our last vendor."),
+        ("Responsiveness", "Response time is acceptable, could be faster during peak season."),
+    ],
+    "Negative": [
+        ("Responsiveness", "Frustrated with how long it took to resolve our refrigeration issue."),
+        ("Pricing", "Feels like pricing has crept up without much explanation."),
+        ("Account Relationship", "Wish we heard from our rep more often \u2014 feels like an afterthought."),
+        ("Responsiveness", "Had to follow up multiple times to get a technician scheduled."),
+        ("Service Quality", "Considering other options given the recent service issues."),
+    ],
+}
+
 
 def _weighted_bucket() -> str:
     pool = [">90", ">90", "90", "90", "60", "60", "45", "45", "30", "30", "10", "Lost"]
@@ -53,6 +77,42 @@ def _weighted_bucket() -> str:
 def _contract_count_for_customer() -> int:
     # Weighted so most customers have 1 contract, some have 2, fewer have 3.
     return random.choice([1, 1, 1, 2, 2, 3])
+
+
+def _generate_feedback_entries(count: int, min_days_ago: int, max_days_ago: int, sentiment_bias: list[str]) -> list[dict]:
+    today = datetime.now(timezone.utc).date()
+    entries = []
+    for _ in range(count):
+        sentiment = random.choice(sentiment_bias)
+        category, comment = random.choice(FEEDBACK_POOL[sentiment])
+        days_ago = random.randint(min_days_ago, max_days_ago)
+        entries.append({
+            "date": (today - timedelta(days=days_ago)).isoformat(),
+            "source": random.choice(FEEDBACK_SOURCES),
+            "sentiment": sentiment,
+            "category": category,
+            "comment": comment,
+        })
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    return entries
+
+
+def _generate_customer_feedback(service_trend_bias: str) -> dict:
+    """Historical (12+ months back) and recent-12-months feedback, generated
+    with a mild sentiment skew so accounts that are already trending risky
+    tend to have more negative recent feedback \u2014 not purely random, so the
+    data is at least internally plausible for a demo."""
+    if service_trend_bias == "declining":
+        recent_bias = ["Negative", "Negative", "Neutral", "Positive"]
+    elif service_trend_bias == "increasing":
+        recent_bias = ["Positive", "Positive", "Neutral"]
+    else:
+        recent_bias = ["Positive", "Neutral", "Neutral", "Negative"]
+    historical_bias = ["Positive", "Neutral", "Neutral", "Negative"]  # less skewed \u2014 baseline
+
+    recent = _generate_feedback_entries(random.randint(2, 5), 1, 365, recent_bias)
+    historical = _generate_feedback_entries(random.randint(1, 3), 366, 900, historical_bias) if random.random() < 0.75 else []
+    return {"recent12Months": recent, "historical": historical}
 
 
 def _generate_service_tickets(eq_type: str) -> list[dict]:
@@ -110,6 +170,9 @@ def generate_contracts() -> list[dict]:
                     "critical": random.random() < 0.4,
                 }
                 service_tickets = _generate_service_tickets(eq_type)
+                nps_score = random.randint(0, 10)
+                feedback_bias = "declining" if nps_score <= 4 else "increasing" if nps_score >= 8 else "stable"
+                customer_feedback = _generate_customer_feedback(feedback_bias)
 
                 contracts.append({
                     "contractId": f"CT-{seq:04d}",
@@ -125,11 +188,13 @@ def generate_contracts() -> list[dict]:
                     "paymentLagDays": payment_lag_days,
                     "equipment": equipment,
                     "serviceTickets": service_tickets,
+                    "customerFeedback": customer_feedback,
+                    "feedbackTrend": feedback_sentiment_trend(customer_feedback),
                     "pmCompletionRate": round(random.uniform(0.40, 0.95), 2),
                     "latePaymentsCount": round(random.uniform(0, 5)) if random.random() < 0.5 else 0,
                     "outstandingBalance": round(contract_value * random.uniform(0, 0.15)) if random.random() < 0.4 else 0,
                     "competitorBidReceived": random.random() < 0.35,
-                    "npsScore": random.randint(0, 10),
+                    "npsScore": nps_score,
                     "portalLogins": random.randint(0, 14),
                     "lastExecTouchpointDaysAgo": random.randint(10, 400),
                     "lastPriceIncreasePct": round(random.uniform(0.0, 0.20), 3),
