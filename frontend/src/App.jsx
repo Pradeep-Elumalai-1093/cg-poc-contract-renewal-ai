@@ -813,7 +813,7 @@ export default function ContractRenewalPOC() {
       </div>
 
       {tab === "overview" && (
-        <div style={{ maxWidth: "60%"}}>
+        <div style={{ maxWidth: "90%"}}>
           <Card style={{ padding: "26px 30px", marginBottom: 18, borderTop: `3px solid ${T.brand}` }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>What we're building, and how</div>
             <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 14px" }}>One-page overview</h2>
@@ -838,7 +838,7 @@ export default function ContractRenewalPOC() {
             <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
               <li><b>Rule-based risk scorecard</b> &mdash; 11 weighted factors (SLA breaches, payment behavior, NPS, competitor activity, and more) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product.</li>
               <li><b>Risk &times; value segmentation</b> &mdash; crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
-              <li><b>Five-agent pipeline</b> &mdash; Ticket Summary and Customer Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
+              <li><b>Six-agent pipeline</b> &mdash; Service Ticket Summary, Customer Summary & Customer Feedback Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
               <li><b>Full traceability</b> &mdash; every recommendation logs its prompts, scores, retries, latency, and token cost, inspectable end to end.</li>
               <li><b>Swappable LLM provider</b> &mdash; Claude API or a locally-hosted vLLM model, switched with one configuration change.</li>
               <li><b>One engine, three regions</b> &mdash; NATT, ETT, and APAC TT run on the same pipeline; region and channel are configuration, not forked code.</li>
@@ -853,24 +853,24 @@ export default function ContractRenewalPOC() {
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Assumptions taken</div>
             <ul style={{ fontSize: 12.5, lineHeight: 1.65, color: T.ink, margin: "0 0 18px", paddingLeft: 20 }}>
-              <li>Unit of analysis is customer-contract, not customer alone \u2014 a customer with 3 contracts is 3 independent renewal journeys.</li>
-              <li>Renewal milestones are 90/60/45/30/10 days to expiry \u2014 not yet validated against CST's actual renewal cadence.</li>
+              <li>Unit of analysis is customer-contract, not customer alone - a customer with 3 contracts is 3 independent renewal journeys.</li>
+              <li>Renewal milestones are 90/60/45/30/10 days to expiry - not yet validated against CST's actual renewal cadence.</li>
               <li>The 5-item retention action taxonomy is our proposal, not CST's existing playbook (none was provided).</li>
-              <li>The risk model is deliberately rule-based, not trained ML \u2014 labeled honestly as a scorecard standing in for where a real model would go.</li>
-              <li>Risk \u00d7 value segmentation thresholds (score \u226550/30, margin vs. book median) are illustrative starting points, not calibrated.</li>
-              <li>All data is synthetic \u2014 customers, contracts, service tickets, financials, and engagement signals are generated, not sourced from CST systems.</li>
+              <li>The risk model is deliberately rule-based, not trained ML - labeled honestly as a scorecard standing in for where a real model would go.</li>
+              <li>Risk x value segmentation thresholds (score ≥50/30, margin vs. book median) are illustrative starting points, not calibrated.</li>
+              <li>All data is synthetic - customers, contracts, service tickets, financials, and engagement signals are generated, not sourced from CST systems.</li>
               <li>The product catalog (5 equipment types) is representative, not CST's actual catalog.</li>
-              <li>The "campaign response by risk bucket" chart is a live proxy from logged outcomes, not a validated historical renewal backtest \u2014 no ground truth exists to validate against.</li>
+              <li>The "campaign response by risk bucket" chart is a live proxy from logged outcomes, not a validated historical renewal backtest - no ground truth exists to validate against.</li>
               <li>Suggested renewal terms (price move %, term length) are rule-based suggestions feeding the draft email, not negotiated or approved figures.</li>
-              <li>Dealer-channel visibility is assumed limited \u2014 the system may only see what the dealer relationship exposes, not necessarily the true end customer.</li>
-              <li>No database \u2014 all state is in-memory and resets on backend restart; a POC simplification, not a production data-architecture recommendation.</li>
+              <li>Dealer-channel visibility is assumed limited - the system may only see what the dealer relationship exposes, not necessarily the true end customer.</li>
+              <li>No database - all state is in-memory and resets on backend restart; a POC simplification, not a production data-architecture recommendation.</li>
               <li>Displayed cost/latency figures use a placeholder blended LLM rate, not live provider pricing.</li>
               <li>Retry limit (2) and the policy-compliance hard-fail rule are configurable defaults, not validated thresholds.</li>
               <li>Ticket/Customer Summary agents are cached and only regenerate on demand or when missing during a batch run, not on every milestone.</li>
-              <li>Outcome tracking uses a simplified 3-value enum (No response / Engaged / Declined) \u2014 real engagement signals (opens, clicks, replies) aren't modeled.</li>
+              <li>Outcome tracking uses a simplified 3-value enum (No response / Engaged / Declined) - real engagement signals (opens, clicks, replies) aren't modeled.</li>
               <li>UI theming uses Carrier's publicly documented 2013 brand blue (#142C73); their internal system may have evolved since the 2025 identity refresh, for which exact specifications weren't available to us.</li>
               <li>Single-process deployment (FastAPI serving the built frontend) is a demo convenience, not a production deployment recommendation.</li>
-              <li>APAC TT's dealer-only channel pattern is assumed analogous to NATT's \u2014 not confirmed by the client.</li>
+              <li>APAC TT's dealer-only channel pattern is assumed analogous to NATT's - not confirmed by the client.</li>
             </ul>
 
             <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted, fontStyle: "italic" }}>
