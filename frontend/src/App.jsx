@@ -328,6 +328,70 @@ function ServiceTicketHistory({ equipment, tickets }) {
   );
 }
 
+const SENTIMENT_COLOR = { Positive: T.safe, Neutral: T.inkFaint, Negative: T.risk };
+const SENTIMENT_BG = { Positive: T.safeBg, Neutral: T.surfaceSunken, Negative: T.riskBg };
+const TREND_COLOR = { Improving: T.safe, Stable: T.inkFaint, Declining: T.risk };
+const TREND_BG = { Improving: T.safeBg, Stable: T.surfaceSunken, Declining: T.riskBg };
+
+function CustomerFeedbackPanel({ feedback, trend }) {
+  const [view, setView] = useState("recent");
+  const recent = feedback?.recent12Months || [];
+  const historical = feedback?.historical || [];
+  const entries = view === "recent" ? recent : historical;
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint }}>
+          Customer feedback
+        </div>
+        <Badge text={trend} color={TREND_COLOR[trend] || T.inkFaint} bg={TREND_BG[trend] || T.surfaceSunken} />
+      </div>
+      <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
+        <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}>
+          <button
+            onClick={() => setView("recent")}
+            style={{
+              flex: 1, padding: "8px 10px", border: "none", cursor: "pointer", fontSize: 11.5, fontWeight: 600,
+              background: view === "recent" ? T.surfaceSunken : T.surface, color: view === "recent" ? T.ink : T.inkMuted,
+            }}
+          >
+            Recent 12 months ({recent.length})
+          </button>
+          <button
+            onClick={() => setView("historical")}
+            style={{
+              flex: 1, padding: "8px 10px", border: "none", cursor: "pointer", fontSize: 11.5, fontWeight: 600,
+              background: view === "historical" ? T.surfaceSunken : T.surface, color: view === "historical" ? T.ink : T.inkMuted,
+              borderLeft: `1px solid ${T.border}`,
+            }}
+          >
+            Historical ({historical.length})
+          </button>
+        </div>
+        {entries.length === 0 ? (
+          <div style={{ padding: 16, fontSize: 12, color: T.inkFaint }}>
+            No {view === "recent" ? "recent" : "historical"} feedback on record.
+          </div>
+        ) : (
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            {entries.map((e, i) => (
+              <div key={i} style={{ padding: "9px 14px", borderBottom: i < entries.length - 1 ? `1px solid ${T.border}` : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                  <Badge text={e.sentiment} color={SENTIMENT_COLOR[e.sentiment] || T.inkFaint} bg={SENTIMENT_BG[e.sentiment] || T.surfaceSunken} />
+                  <span style={{ fontSize: 11, color: T.inkFaint }}>{e.category} · {e.source}</span>
+                  <span style={{ fontSize: 10.5, color: T.inkFaint, marginLeft: "auto", fontFamily: "ui-monospace, monospace" }}>{e.date}</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: T.ink, fontStyle: "italic" }}>&ldquo;{e.comment}&rdquo;</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
 function RiskFactorBreakdown({ factors }) {
   if (!factors) return null;
   const entries = Object.entries(factors).sort((a, b) => b[1] - a[1]);
@@ -1192,6 +1256,8 @@ export default function ContractRenewalPOC() {
             />
 
             <ServiceTicketHistory equipment={selectedContract.equipment} tickets={selectedContract.serviceTickets} />
+
+            <CustomerFeedbackPanel feedback={selectedContract.customerFeedback} trend={selectedContract.feedbackTrend} />
 
             {!selectedTrace && (
               <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>

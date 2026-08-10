@@ -10,6 +10,33 @@ shown in the UI to describe it accurately.
 """
 
 PRIORITY_WEIGHT = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+SENTIMENT_SCORE = {"Positive": 1, "Neutral": 0, "Negative": -1}
+
+
+def feedback_sentiment_trend(feedback: dict) -> str:
+    """Rule-based (no LLM call) comparison of recent-12-months sentiment
+    against historical sentiment, so both the UI and the agent context get
+    a one-word trend instead of raw entries alone."""
+    recent = feedback.get("recent12Months", [])
+    historical = feedback.get("historical", [])
+    if not recent and not historical:
+        return "No feedback on record"
+    if not historical:
+        return "Insufficient history to compare"
+
+    def avg_score(entries):
+        return sum(SENTIMENT_SCORE.get(e.get("sentiment"), 0) for e in entries) / len(entries)
+
+    recent_avg = avg_score(recent) if recent else 0
+    historical_avg = avg_score(historical)
+    delta = recent_avg - historical_avg
+
+    if delta >= 0.4:
+        return "Improving"
+    if delta <= -0.4:
+        return "Declining"
+    return "Stable"
+
 
 
 def top_loss_reasons(tickets: list[dict], limit: int = 3) -> list[str]:
