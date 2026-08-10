@@ -1,7 +1,7 @@
 """
 Thin, swappable LLM client. Same idea as the earlier Node proxy, now living
 directly in the Python backend since the agent graph runs here too.
-Switch providers via LLM_PROVIDER in .env: "anthropic" or "vllm".
+Switch providers via LLM_PROVIDER in .env: "anthropic", "openrouter", or "vllm".
 """
 import os
 import time
@@ -47,6 +47,8 @@ async def call_llm(prompt_text: str) -> dict:
     try:
         if provider == "vllm":
             raw, input_tokens, output_tokens = await _call_vllm(prompt_text)
+        elif provider == "openrouter":
+            raw, input_tokens, output_tokens = await _call_openrouter(prompt_text)
         else:
             raw, input_tokens, output_tokens = await _call_anthropic(prompt_text)
     except httpx.TimeoutException:
@@ -61,7 +63,7 @@ async def call_llm(prompt_text: str) -> dict:
     if not raw:
         raise LLMError(
             "LLM response had no text content — check VLLM_MODEL exactly matches "
-            "the model vLLM was launched with, or check your Anthropic API key."
+            "the model vLLM was launched with, or check your API key for the selected provider."
         )
 
     return {
@@ -99,6 +101,41 @@ async def _call_anthropic(prompt_text: str) -> tuple[str, int, int]:
     raw = text_block["text"] if text_block else ""
     usage = data.get("usage", {})
     return raw, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+
+
+async def _call_openrouter(prompt_text: str) -> tuple[str, int, int]:
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise LLMError("OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.")
+    model = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.6")
+
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    # Optional but recommended by OpenRouter for their analytics/leaderboards —
+    # harmless to omit, so only sent if set.
+    if os.environ.get("OPENROUTER_SITE_URL"):
+        headers["HTTP-Referer"] = os.environ["OPENROUTER_SITE_URL"]
+    if os.environ.get("OPENROUTER_SITE_NAME"):
+        headers["X-Title"] = os.environ["OPENROUTER_SITE_NAME"]
+
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": model,
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt_text}],
+            },
+        )
+    if response.status_code >= 400:
+        raise LLMError(f"OpenRouter API error (HTTP {response.status_code}): {response.text[:300]}")
+    data = response.json()
+    choices = data.get("choices", [])
+    text = choices[0]["message"]["content"] if choices else ""
+    usage = data.get("usage", {})
+    # OpenRouter's usage object is OpenAI-shaped (prompt_tokens/completion_tokens),
+    # same as vLLM's, since both speak the OpenAI-compatible chat/completions format.
+    return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 
 async def _call_vllm(prompt_text: str) -> tuple[str, int, int]:
