@@ -1442,8 +1442,6 @@ export default function ContractRenewalPOC() {
                     content={({ x, y, width, index }) => {
                       const row = dashCampaignData[index];
                       if (!row) return null;
-                      console.log("Pradeep");
-                      console.log(row);
                       return (
                         <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
                           {row.Assigned}
