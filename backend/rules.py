@@ -9,6 +9,9 @@ honestly as such, not a trained ML model. MODEL_INFO below is the copy
 shown in the UI to describe it accurately.
 """
 
+import math
+
+
 PRIORITY_WEIGHT = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
 SENTIMENT_SCORE = {"Positive": 1, "Neutral": 0, "Negative": -1}
 
@@ -169,11 +172,11 @@ def compute_segment(risk_score: int, margin: float, median_margin: float) -> str
     """Risk crossed with value — a high-risk, high-margin account is a very
     different priority than a high-risk, low-margin one."""
     above_median = margin > median_margin
-    if risk_score >= 70:
+    if (math.ceil(risk_score) >= 70) or (math.ceil(risk_score)>=60 and above_median):
         return "High Risk" if above_median else "At Risk"
-    if risk_score >= 50:
+    if math.ceil(risk_score) >= 50:
         return "At Risk"
-    return "Healthy" if (risk_score>=30 and above_median) else "Standard"
+    return "Healthy" if (math.ceil(risk_score)>=30 and above_median) else "Standard"
 
 
 def suggested_renewal_terms(contract: dict) -> dict:

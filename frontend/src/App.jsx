@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
-  BarChart, Bar, Legend
+  BarChart, Bar, Legend, LabelList
 } from "recharts";
 import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send } from "lucide-react";
 import { api } from "./api.js";
@@ -58,8 +58,20 @@ const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.sa
 const SEGMENT_BG = { "High Risk": T.riskBg, "At Risk": T.amberBg, "Healthy": T.safeBg, "Standard": T.infoBg };
 const BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"];
 const BUCKET_LABEL = {
-  ">90": "Not yet due", "90": "≤90 days", "60": "≤60 days",
-  "45": "≤45 days", "30": "≤30 days", "10": "≤10 days", "Lost": "Lost",
+  ">90": "Not yet due", "90": "Expiring in \u226490 days", "60": "Expiring in \u226460 days",
+  "45": "Expiring in \u226445 days", "30": "Expiring in \u226430 days", "10": "Expiring in \u226410 days", "Lost": "Lost / expired",
+};
+// Fuller sentence for a hover tooltip on the bucket cards specifically —
+// BUCKET_LABEL above stays short since it's also reused in tight spaces
+// (table cells, pill badges) where a full sentence wouldn't fit.
+const BUCKET_TOOLTIP = {
+  ">90": "More than 90 days remain before this contract enters its renewal window.",
+  "90": "Contract is about to expire in \u226490 days.",
+  "60": "Contract is about to expire in \u226460 days.",
+  "45": "Contract is about to expire in \u226445 days.",
+  "30": "Contract is about to expire in \u226430 days.",
+  "10": "Contract is about to expire in \u226410 days.",
+  "Lost": "Contract has already expired or been lost.",
 };
 const DUE_BUCKETS = ["90", "60", "45", "30", "10"];
 
@@ -88,11 +100,12 @@ const MAX_RETRIES = 2;
 /* ---------------------------------------------------------------
    SMALL UI PRIMITIVES
 ----------------------------------------------------------------*/
-function Card({ children, style, onClick, className }) {
+function Card({ children, style, onClick, className, title }) {
   return (
     <div
       onClick={onClick}
       className={className}
+      title={title}
       style={{
         background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
         padding: 16, cursor: onClick ? "pointer" : "default", ...style,
@@ -517,17 +530,18 @@ function aggregateBookMetrics(list, traceByContract) {
 }
 
 // Same shape/logic as the backend's /api/campaigns (assigned/engaged/
-// declined/noResponse per taxonomy name), plus the two $ metrics, computed
+// declined/noResponse per taxonomy name), plus the $ metrics, computed
 // over whatever trace subset the Dashboard filters produce.
 function aggregateCampaigns(traceList) {
   const result = {};
-  CAMPAIGN_TAXONOMY.forEach((t) => { result[t.name] = { assigned: 0, engaged: 0, declined: 0, noResponse: 0, atRiskValue: 0, potentialRevenueValue: 0 }; });
+  CAMPAIGN_TAXONOMY.forEach((t) => { result[t.name] = { assigned: 0, assignedValue: 0, engaged: 0, declined: 0, noResponse: 0, atRiskValue: 0, potentialRevenueValue: 0 }; });
   traceList.forEach((r) => {
     const name = (r.recommendation || {}).campaign;
     const entry = result[name];
     if (!entry) return;
     entry.assigned += 1;
     const value = (r.context || {}).contract_value_usd || 0;
+    entry.assignedValue += value;
     if (r.outcome === "Engaged") { entry.engaged += 1; entry.potentialRevenueValue += value; }
     else if (r.outcome === "Declined") { entry.declined += 1; entry.atRiskValue += value; }
     else if (r.outcome === "No response") { entry.noResponse += 1; entry.atRiskValue += value; }
@@ -832,10 +846,12 @@ export default function ContractRenewalPOC() {
     const agg = aggregateCampaigns(dashFilteredTrace);
     return CAMPAIGN_TAXONOMY.map((t) => {
       const s = agg[t.name];
+      const responseCount = s.engaged + s.declined; // customer responded, either way — same definition the old Campaigns tab used
       return {
         name: t.name, Assigned: s.assigned, Engaged: s.engaged, "Not converted": s.declined + s.noResponse,
-        declined: s.declined, noResponse: s.noResponse,
-        atRiskValue: s.atRiskValue, potentialRevenueValue: s.potentialRevenueValue,
+        declined: s.declined, noResponse: s.noResponse, responseCount,
+        responseRate: s.assigned ? Math.round((responseCount / s.assigned) * 100) : 0,
+        assignedValue: s.assignedValue, atRiskValue: s.atRiskValue, potentialRevenueValue: s.potentialRevenueValue,
       };
     });
   }, [dashFilteredTrace]);
@@ -864,6 +880,13 @@ export default function ContractRenewalPOC() {
     const maxVal = Math.max(1, ...scatterData.map((d) => d.y));
     return Math.ceil((maxVal * 1.1) / 5000) * 5000;
   }, [scatterData]);
+
+  // Same helper the Dashboard tab uses for Total value / At risk $ / Converted
+  // $ — one definition of these metrics, not a second copy for this tab.
+  const plannerBookMetrics = useMemo(
+    () => aggregateBookMetrics(filteredContracts, traceByContract),
+    [filteredContracts, traceByContract]
+  );
 
   const selectedContract = contracts.find((c) => c.contractId === selected);
   const portfolioContracts = selectedContract
@@ -1051,12 +1074,15 @@ export default function ContractRenewalPOC() {
             )}
           </div>
 
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Contract expiring in: </div>
+          
           {/* Bucket cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 18 }}>
             {BUCKETS.map((b) => (
               <Card
                 key={b}
                 onClick={() => setBucketFilter(bucketFilter === b ? null : b)}
+                title={BUCKET_TOOLTIP[b]}
                 style={{
                   padding: "12px 14px",
                   borderColor: bucketFilter === b ? T.ink : T.border,
@@ -1135,6 +1161,9 @@ export default function ContractRenewalPOC() {
                 <StatBlock label="Lost" value={filteredContracts.filter((c) => c.bucket === "Lost").length} sub="past expiry" accent={T.risk} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
                 <StatBlock label="Recommendations run" value={metrics.totalRuns} sub={`of ${contracts.length} contracts`} />
+                <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} />
+                <StatBlock label="At risk $" value={`$${(plannerBookMetrics.atRiskValue / 1000).toFixed(0)}k`} sub="reached out, declined / no response" accent={T.risk} />
+                <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
               </div>
               <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted }}>
                 {dueContracts.length > 0
@@ -1308,6 +1337,7 @@ export default function ContractRenewalPOC() {
               <Card
                 key={b}
                 onClick={() => setDashBucketFilter(dashBucketFilter === b ? null : b)}
+                title={BUCKET_TOOLTIP[b]}
                 style={{
                   padding: "12px 14px",
                   borderColor: dashBucketFilter === b ? T.ink : T.border,
@@ -1367,13 +1397,29 @@ export default function ContractRenewalPOC() {
           <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Campaign performance</div>
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={dashCampaignData} margin={{ top: 6, right: 12, bottom: 40, left: 0 }}>
+              <BarChart data={dashCampaignData} margin={{ top: 24, right: 12, bottom: 40, left: 0 }}>
                 <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" stroke={T.inkFaint} tick={{ fontSize: 10.5 }} interval={0} angle={-20} textAnchor="end" height={60} />
                 <YAxis stroke={T.inkFaint} tick={{ fontSize: 11 }} allowDecimals={false} />
                 <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Assigned" fill={T.borderStrong} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Assigned" fill={T.borderStrong} radius={[4, 4, 0, 0]}>
+                  {/* # of responses (engaged + declined) and response rate,
+                      shown above the Assigned bar since it's always the
+                      tallest (assigned is a superset of every outcome). */}
+                  <LabelList
+                    dataKey="Assigned"
+                    content={({ x, y, width, index }) => {
+                      const row = dashCampaignData[index];
+                      if (!row) return null;
+                      return (
+                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                          {row.responseCount} ({row.responseRate}%)
+                        </text>
+                      );
+                    }}
+                  />
+                </Bar>
                 <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Not converted" fill={T.risk} radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -1385,7 +1431,7 @@ export default function ContractRenewalPOC() {
               <thead>
                 <tr>
                   <th>Campaign</th><th>Assigned</th><th>Engaged</th><th>Declined</th><th>No response</th>
-                  <th>At risk $</th><th>Potential revenue $</th>
+                  <th>Revenue assigned $</th><th>At risk $</th><th>Potential revenue $</th>
                 </tr>
               </thead>
               <tbody>
@@ -1396,6 +1442,7 @@ export default function ContractRenewalPOC() {
                     <td>{row.Engaged}</td>
                     <td>{row.declined}</td>
                     <td>{row.noResponse}</td>
+                    <td>${row.assignedValue.toLocaleString()}</td>
                     <td style={{ color: row.atRiskValue > 0 ? T.risk : T.inkMuted }}>${row.atRiskValue.toLocaleString()}</td>
                     <td style={{ color: row.potentialRevenueValue > 0 ? T.safe : T.inkMuted }}>${row.potentialRevenueValue.toLocaleString()}</td>
                   </tr>
