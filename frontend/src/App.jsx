@@ -1108,7 +1108,9 @@ export default function ContractRenewalPOC() {
               <span style={{ fontSize: 11.5, color: T.inkFaint }}>{filteredContracts.length} of {contracts.length} contracts shown</span>
             )}
           </div>
-
+    
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Contract expiring in: </div>
+    
           {/* Bucket cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 18 }}>
             {BUCKETS.map((b) => (
