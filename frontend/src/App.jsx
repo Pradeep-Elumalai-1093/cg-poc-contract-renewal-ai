@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
-  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
+  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine
 } from "recharts";
 import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
 import { api } from "./api.js";
@@ -44,6 +44,11 @@ const T = {
   brandLight: "#4A63A8",
 };
 
+// Mirrors the "score >= 50" split named in the risk x value segmentation
+// (illustrative, per project assumptions — not read from rules.py, which
+// isn't exposed over the API). If that threshold changes server-side, this
+// line and the backend's segment cutoff will drift apart.
+const RISK_QUADRANT_THRESHOLD = 50;
 const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.inkFaint };
 const SEGMENT_BG = { "High Risk": T.riskBg, "At Risk": T.amberBg, "Healthy": T.safeBg, "Standard": T.surfaceSunken };
 const BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"];
@@ -711,8 +716,17 @@ export default function ContractRenewalPOC() {
   }, [filteredContracts, bucketFilter]);
 
   const scatterData = useMemo(() => filteredContracts.map((c) => ({
-    x: c.monthsOnBook, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
+    x: c.riskScore, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
   })), [filteredContracts]);
+
+  // Horizontal quadrant split — median of whatever's currently filtered,
+  // so it tracks the visible book rather than a fixed dollar figure.
+  const medianContractValue = useMemo(() => {
+    const vals = filteredContracts.map((c) => c.contractValue).sort((a, b) => a - b);
+    if (!vals.length) return 0;
+    const mid = Math.floor(vals.length / 2);
+    return vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+  }, [filteredContracts]);
 
   const selectedContract = contracts.find((c) => c.contractId === selected);
   const portfolioContracts = selectedContract
@@ -924,17 +938,19 @@ export default function ContractRenewalPOC() {
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value segmentation</div>
-              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Months on book vs. contract value — colored by risk × value segment</div>
+              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk score vs. contract value — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median value</div>
               <ResponsiveContainer width="100%" height={280}>
                 <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
                   <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
-                  <XAxis type="number" dataKey="x" name="Months on book" stroke={T.inkFaint} tick={{ fontSize: 11 }} />
+                  <XAxis type="number" dataKey="x" name="Risk score" domain={[0, 100]} stroke={T.inkFaint} tick={{ fontSize: 11 }} />
                   <YAxis type="number" dataKey="y" name="Contract value" stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
                   <ZAxis range={[55, 55]} />
+                  <ReferenceLine x={RISK_QUADRANT_THRESHOLD} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Risk " + RISK_QUADRANT_THRESHOLD, position: "insideTopLeft", fill: T.inkFaint, fontSize: 10 }} />
+                  <ReferenceLine y={medianContractValue} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Median value", position: "insideBottomRight", fill: T.inkFaint, fontSize: 10 }} />
                   <Tooltip
                     cursor={{ strokeDasharray: "3 3" }}
                     contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }}
-                    formatter={(value, key) => key === "y" ? [`$${value.toLocaleString()}`, "Contract value"] : [value, "Months on book"]}
+                    formatter={(value, key) => key === "y" ? [`$${value.toLocaleString()}`, "Contract value"] : [value, "Risk score"]}
                     labelFormatter={() => ""}
                   />
                   {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (

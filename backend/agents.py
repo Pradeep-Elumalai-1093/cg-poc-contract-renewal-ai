@@ -15,7 +15,7 @@ from state import CAMPAIGN_TAXONOMY
 from rules import PRODUCT_CATALOG
 from llm_client import call_llm, LLMError, remove_think
 
-MAX_RETRIES = 2
+MAX_RETRIES = 0
 COMPOSITE_PASS = 7
 POLICY_FLOOR = 6
 COST_PER_M_INPUT = 3.0
