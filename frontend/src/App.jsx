@@ -913,6 +913,15 @@ export default function ContractRenewalPOC() {
     [filteredContracts, traceByContract]
   );
 
+  // "Action required" is the default actionStatus every trace record gets
+  // and flips to "Action done" once a rep marks it complete — scoped to
+  // filteredContracts so this stays in sync with the region/channel/bucket
+  // filters instead of reading the backend's unfiltered global total.
+  const actionsNeeded = useMemo(
+    () => filteredContracts.filter((c) => traceByContract[c.contractId]?.actionStatus === "Action required").length,
+    [filteredContracts, traceByContract]
+  );
+
   const selectedContract = contracts.find((c) => c.contractId === selected);
   const portfolioContracts = selectedContract
     ? contracts.filter((c) => c.customerId === selectedContract.customerId).sort((a, b) => b.riskScore - a.riskScore)
@@ -1221,23 +1230,18 @@ export default function ContractRenewalPOC() {
                 <StatBlock label="Total contracts" value={plannerBookMetrics.contractCount} />
                 <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
-                <StatBlock label="Recommendations run" value={metrics.totalRuns} sub={`of ${contracts.length} contracts`} />
+                <StatBlock label="Actions needed" value={actionsNeeded} sub={`of ${plannerBookMetrics.contractCount} contracts`} accent={actionsNeeded > 0 ? T.risk : undefined} />
                 <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} />
                 <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="reached out, no response yet" accent={T.amber} />
                 <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
                 <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
-              </div>
-              <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted }}>
-                {dueContracts.length > 0
-                  ? `${dueContracts.length} contract-milestones are due for a fresh recommendation.`
-                  : "All eligible contracts are up to date for their current milestone."}
               </div>
             </Card>
 
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign response by risk bucket</div>
               <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
-                Live signal from logged outcomes, reflecting the region/channel filters above — not a validated renewal-outcome backtest, since we don't have historical renewal ground truth.
+                Live signal from logged outcomes, reflecting the region/channel filters above.
               </div>
               {filteredOutcomeByRiskBucket.totalWithOutcome > 0 ? (
                 <OutcomeBucketChart data={filteredOutcomeByRiskBucket} />
