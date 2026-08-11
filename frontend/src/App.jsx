@@ -230,9 +230,16 @@ function DraftContent({ content, contentError, customerName }) {
   // This opens whatever the browser/OS has set as the default mail handler
   // (Outlook, if that's the user's default) with the fields below prefilled.
   const recipientEmail = `${(customerName || "customer").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}@client.com`;
+  // Outlook Web's own compose URL, not mailto: — mailto: always goes through
+  // whatever the OS has registered as the default mail handler (the desktop
+  // app, if one's installed), and there's no browser-level way to redirect
+  // that to a specific webmail provider instead. This is Outlook-specific;
+  // it does nothing useful if the rep doesn't use Outlook/Microsoft 365.
   const sendEmail = () => {
-    const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(content.email_subject)}&body=${encodeURIComponent(content.email_body)}`;
-    window.location.href = mailto;
+    const to = encodeURIComponent(recipientEmail);
+    const subject = encodeURIComponent(content.email_subject);
+    const body = encodeURIComponent(content.email_body);
+    window.open(`https://outlook.cloud.microsoft/mail/deeplink/compose?to=${to}&subject=${subject}&body=${body}`, "_blank");
   };
 
   return (
