@@ -516,7 +516,7 @@ function SegmentBar({ counts }) {
 //   (due_contracts() excludes the "Lost" bucket from the batch pipeline
 //   entirely), so this can't be computed from outcome alone or every Lost
 //   contract would show $0 here.
-// - "Potential revenue $" = contacted and Engaged.
+// - "Converted $" (field: potentialRevenueValue) = contacted and Engaged.
 function aggregateBookMetrics(list, traceByContract) {
   const customerIds = new Set();
   const segmentCounts = { "High Risk": 0, "At Risk": 0, "Healthy": 0, "Standard": 0 };
@@ -1268,7 +1268,7 @@ export default function ContractRenewalPOC() {
                 <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
                 <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
-                <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="reached out, no response yet" accent={T.amber} />
+                <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
                 <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
               </div>
             </Card>
@@ -1457,14 +1457,15 @@ export default function ContractRenewalPOC() {
             <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>
               Global{dashBucketFilter ? ` — ${BUCKET_LABEL[dashBucketFilter]}` : ""}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 16, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
               <StatBlock label="Customers" value={dashGlobalMetrics.customerCount} />
               <StatBlock label="Contracts" value={dashGlobalMetrics.contractCount} />
-              <StatBlock label="Revenue" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} />
+              <StatBlock label="Total contract value" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} sub="across filtered portfolio" />
               <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000).toFixed(0)}k`} />
-              <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="reached out, no response yet" accent={T.amber} />
+              <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+              <StatBlock label="Converted $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
+              <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
               <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
-              <StatBlock label="Potential revenue $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
             </div>
             <SegmentBar counts={dashGlobalMetrics.segmentCounts} />
           </Card>
@@ -1483,11 +1484,12 @@ export default function ContractRenewalPOC() {
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
                     <StatBlock label="Customers" value={m.customerCount} />
                     <StatBlock label="Contracts" value={m.contractCount} />
-                    <StatBlock label="Revenue" value={`$${(m.totalValue / 1000).toFixed(0)}k`} />
+                    <StatBlock label="Total contract value" value={`$${(m.totalValue / 1000).toFixed(0)}k`} sub="across filtered portfolio" />
                     <StatBlock label="Margin" value={`$${(m.totalMargin / 1000).toFixed(0)}k`} />
-                    <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000).toFixed(0)}k`} accent={T.amber} />
-                    <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000).toFixed(0)}k`} accent={T.risk} />
-                    <StatBlock label="Potential revenue $" value={`$${(m.potentialRevenueValue / 1000).toFixed(0)}k`} accent={T.safe} />
+                    <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+                    <StatBlock label="Converted $" value={`$${(m.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
+                    <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
+                    <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
                   </div>
                   <SegmentBar counts={m.segmentCounts} />
                 </Card>
@@ -1580,7 +1582,7 @@ export default function ContractRenewalPOC() {
               <thead>
                 <tr>
                   <th>Campaign</th><th>Assigned</th><th>Engaged</th><th>Declined</th><th>No response</th>
-                  <th>Revenue Assigned $</th><th style={{ color: T.amber}}>Potential $ at risk</th><th style={{ color: T.risk}}>Lost revenue $</th><th style={{ color: T.safe}}>Potential revenue $</th>
+                  <th>Total Contract Value $</th><th style={{ color: T.amber}}>Potential $ at risk</th><th style={{ color: T.risk}}>Lost revenue $</th><th style={{ color: T.safe}}>Converted $</th>
                 </tr>
               </thead>
               <tbody>
