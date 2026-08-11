@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
-  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea
+  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
+  BarChart, Bar, Legend
 } from "recharts";
 import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
 import { api } from "./api.js";
@@ -20,7 +21,7 @@ const T = {
   ink: "#161B22",
   inkMuted: "#5B6472",
   inkFaint: "#8A93A3",
-  border: "#DFE3E8",
+  border: "#dfe3e8",
   borderStrong: "#C7CCD4",
   risk: "#C1502E",
   riskBg: "#FBEBE5",
@@ -484,6 +485,49 @@ function SegmentBar({ counts }) {
   );
 }
 
+// Rolls a list of contracts up into the KPIs the Dashboard tab shows —
+// shared by the Global card and each per-region card so there's one
+// definition of "at risk $" / "potential revenue $", not one per call site.
+// "At risk" = contacted (has a trace outcome) and Declined or No response.
+// "Potential revenue" = contacted and Engaged. Matches the definitions
+// given for the Dashboard: revenue = contract value, potential revenue =
+// contract value once the customer responds Engaged.
+function aggregateBookMetrics(list, traceByContract) {
+  const customerIds = new Set();
+  const segmentCounts = { "High Risk": 0, "At Risk": 0, "Healthy": 0, "Standard": 0 };
+  let totalValue = 0, totalMargin = 0, atRiskValue = 0, potentialRevenueValue = 0;
+  list.forEach((c) => {
+    customerIds.add(c.customerId);
+    totalValue += c.contractValue;
+    totalMargin += c.margin;
+    segmentCounts[c.segment] = (segmentCounts[c.segment] || 0) + 1;
+    const outcome = traceByContract[c.contractId]?.outcome;
+    if (outcome === "Declined" || outcome === "No response") atRiskValue += c.contractValue;
+    else if (outcome === "Engaged") potentialRevenueValue += c.contractValue;
+  });
+  return { customerCount: customerIds.size, contractCount: list.length, totalValue, totalMargin, atRiskValue, potentialRevenueValue, segmentCounts };
+}
+
+// Same shape/logic as the backend's /api/campaigns (assigned/engaged/
+// declined/noResponse per taxonomy name), plus the two $ metrics, computed
+// over whatever trace subset the Dashboard filters produce.
+function aggregateCampaigns(traceList) {
+  const result = {};
+  CAMPAIGN_TAXONOMY.forEach((t) => { result[t.name] = { assigned: 0, engaged: 0, declined: 0, noResponse: 0, atRiskValue: 0, potentialRevenueValue: 0 }; });
+  traceList.forEach((r) => {
+    const name = (r.recommendation || {}).campaign;
+    const entry = result[name];
+    if (!entry) return;
+    entry.assigned += 1;
+    const value = (r.context || {}).contract_value_usd || 0;
+    if (r.outcome === "Engaged") { entry.engaged += 1; entry.potentialRevenueValue += value; }
+    else if (r.outcome === "Declined") { entry.declined += 1; entry.atRiskValue += value; }
+    else if (r.outcome === "No response") { entry.noResponse += 1; entry.atRiskValue += value; }
+  });
+  return result;
+}
+
+
 function OutcomeBucketChart({ data }) {
   const max = Math.max(...data.engaged, ...data.notEngaged, 1);
   return (
@@ -545,15 +589,21 @@ export default function ContractRenewalPOC() {
   const [contracts, setContracts] = useState([]);
   const [trace, setTrace] = useState([]);
   const [metrics, setMetrics] = useState({ firstPassRate: 0, avgRetries: "0.00", escalationRate: 0, avgLatency: 0, totalCost: 0, responseRate: null, totalRuns: 0 });
-  const [campaignSummary, setCampaignSummary] = useState({});
   const [modelInfo, setModelInfo] = useState(null);
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
-  const [regionSummary, setRegionSummary] = useState(null);
   const [tab, setTab] = useState("renewal-planner");
   const [bucketFilter, setBucketFilter] = useState(null);
   const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
+  // Dashboard tab's own Global -> Regional -> Segment -> Milestone drill-down.
+  // Kept separate from the Renewal Planner filters above — the two tabs
+  // answer different questions, so filtering one shouldn't silently filter
+  // the other when you switch tabs.
+  const [dashRegionFilter, setDashRegionFilter] = useState([]);
+  const [dashChannelFilter, setDashChannelFilter] = useState([]);
+  const [dashSegmentFilter, setDashSegmentFilter] = useState([]);
+  const [dashBucketFilter, setDashBucketFilter] = useState(null);
   const [selected, setSelected] = useState(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -562,14 +612,12 @@ export default function ContractRenewalPOC() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [c, t, m, cs, mi, ts, cust, rs] = await Promise.all([
-        api.getContracts(), api.getTrace(), api.getMetrics(), api.getCampaigns(),
+      const [c, t, m, mi, ts, cust] = await Promise.all([
+        api.getContracts(), api.getTrace(), api.getMetrics(),
         api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(),
-        api.getRegionSummary(),
       ]);
-      setContracts(c); setTrace(t); setMetrics(m); setCampaignSummary(cs);
+      setContracts(c); setTrace(t); setMetrics(m);
       setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust);
-      setRegionSummary(rs);
     } catch (e) {
       setApiError(String(e.message || e));
     }
@@ -724,6 +772,66 @@ export default function ContractRenewalPOC() {
     return c;
   }, [regionChannelContracts]);
 
+  // Dashboard tab: region/channel/segment only — bucket cards here need this
+  // unfiltered by dashBucketFilter itself, same reasoning as regionChannelContracts above.
+  const dashRegionChannelSegmentContracts = useMemo(() => {
+    return contracts.filter((c) => {
+      const regionOk = dashRegionFilter.length === 0 || dashRegionFilter.includes(c.region);
+      const channelOk = dashChannelFilter.length === 0 || dashChannelFilter.includes(c.channel);
+      const segmentOk = dashSegmentFilter.length === 0 || dashSegmentFilter.includes(c.segment);
+      return regionOk && channelOk && segmentOk;
+    });
+  }, [contracts, dashRegionFilter, dashChannelFilter, dashSegmentFilter]);
+
+  const dashFilteredContracts = useMemo(() => {
+    if (!dashBucketFilter) return dashRegionChannelSegmentContracts;
+    return dashRegionChannelSegmentContracts.filter((c) => c.bucket === dashBucketFilter);
+  }, [dashRegionChannelSegmentContracts, dashBucketFilter]);
+
+  const dashBucketCounts = useMemo(() => {
+    const c = {};
+    BUCKETS.forEach((b) => (c[b] = 0));
+    dashRegionChannelSegmentContracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
+    return c;
+  }, [dashRegionChannelSegmentContracts]);
+
+  // Trace-side counterpart for the campaign section — filters on each trace
+  // record's own snapshotted context (region/channel/segment/milestone), same
+  // design principle already used by filteredOutcomeByRiskBucket above: the
+  // snapshot at recommendation time, not the contract's current live fields.
+  const dashFilteredTrace = useMemo(() => {
+    return trace.filter((r) => {
+      const ctx = r.context || {};
+      const regionOk = dashRegionFilter.length === 0 || dashRegionFilter.includes(ctx.region);
+      const channelOk = dashChannelFilter.length === 0 || dashChannelFilter.includes(ctx.channel);
+      const segmentOk = dashSegmentFilter.length === 0 || dashSegmentFilter.includes(ctx.segment);
+      const bucketOk = !dashBucketFilter || ctx.milestone === dashBucketFilter;
+      return regionOk && channelOk && segmentOk && bucketOk;
+    });
+  }, [trace, dashRegionFilter, dashChannelFilter, dashSegmentFilter, dashBucketFilter]);
+
+  const dashGlobalMetrics = useMemo(
+    () => aggregateBookMetrics(dashFilteredContracts, traceByContract),
+    [dashFilteredContracts, traceByContract]
+  );
+
+  const dashRegionsToShow = useMemo(
+    () => (dashRegionFilter.length === 0 ? REGIONS : REGIONS.filter((r) => dashRegionFilter.includes(r.id))),
+    [dashRegionFilter]
+  );
+
+  const dashCampaignData = useMemo(() => {
+    const agg = aggregateCampaigns(dashFilteredTrace);
+    return CAMPAIGN_TAXONOMY.map((t) => {
+      const s = agg[t.name];
+      return {
+        name: t.name, Assigned: s.assigned, Engaged: s.engaged, "Not converted": s.declined + s.noResponse,
+        declined: s.declined, noResponse: s.noResponse,
+        atRiskValue: s.atRiskValue, potentialRevenueValue: s.potentialRevenueValue,
+      };
+    });
+  }, [dashFilteredTrace]);
+
   const worklist = useMemo(() => {
     return [...filteredContracts].sort((a, b) => b.riskScore - a.riskScore);
   }, [filteredContracts]);
@@ -762,8 +870,8 @@ export default function ContractRenewalPOC() {
     // ...then persist to the backend, which is the source of truth.
     try {
       await api.sendFeedback(contractId, outcome, note);
-      const [t, m, cs] = await Promise.all([api.getTrace(), api.getMetrics(), api.getCampaigns()]);
-      setTrace(t); setMetrics(m); setCampaignSummary(cs);
+      const [t, m] = await Promise.all([api.getTrace(), api.getMetrics()]);
+      setTrace(t); setMetrics(m);
     } catch (e) {
       setApiError(String(e.message || e));
     }
@@ -841,9 +949,8 @@ export default function ContractRenewalPOC() {
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
         <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
         <button className={`tabbtn ${tab === "renewal-planner" ? "active" : ""}`} onClick={() => setTab("renewal-planner")}>Renewal Planner</button>
+        <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
-        <button className={`tabbtn ${tab === "campaigns" ? "active" : ""}`} onClick={() => setTab("campaigns")}>Campaigns</button>
-        <button className={`tabbtn ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>Global &amp; Regions</button>
       </div>
 
       {tab === "overview" && (
@@ -1156,66 +1263,138 @@ export default function ContractRenewalPOC() {
         </>
       )}
 
-      {tab === "campaigns" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
-          {CAMPAIGN_TAXONOMY.map((t) => {
-            const s = campaignSummary[t.name];
-            const total = s.assigned;
-            const responseRate = total ? Math.round(((s.engaged + s.declined) / total) * 100) : 0;
-            const engagedRate = total ? Math.round((s.engaged / total) * 100) : 0;
-            return (
-              <Card key={t.id} style={{ padding: 16 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 10 }}>{t.name}</div>
-                <div style={{ display: "flex", gap: 18, marginBottom: 10 }}>
-                  <StatBlock label="Assigned" value={total} />
-                  <StatBlock label="Engaged" value={s.engaged} accent={T.safe} />
-                </div>
-                <div style={{ fontSize: 11.5, color: T.inkMuted }}>
-                  Response rate {responseRate}% · Engagement rate {engagedRate}%
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {tab === "summary" && regionSummary && (
+      {tab === "dashboard" && (
         <>
-          <Card style={{ padding: 18, marginBottom: 16 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>Global</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
-              <StatBlock label="Customers" value={regionSummary.global.customerCount} />
-              <StatBlock label="Contracts" value={regionSummary.global.contractCount} />
-              <StatBlock label="Total value" value={`$${(regionSummary.global.totalValue / 1000).toFixed(0)}k`} />
-              <StatBlock label="Total margin" value={`$${(regionSummary.global.totalMargin / 1000).toFixed(0)}k`} />
-              <StatBlock label="Avg. risk score" value={regionSummary.global.avgRiskScore} />
-            </div>
-            <SegmentBar counts={regionSummary.global.segmentCounts} />
-          </Card>
+          {/* Drill-down filters — same chip pattern as Renewal Planner, plus
+              a Segment filter. No filter selected = Global; adding region/
+              channel/segment/bucket chips narrows down to Regional / Segment /
+              Milestone level, all using the same underlying data. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>Filters</span>
+            <MultiSelect
+              label="regions"
+              options={REGIONS.map((r) => ({ value: r.id, label: r.id === "APAC_TT" ? "APAC-TT" : r.id }))}
+              selected={dashRegionFilter}
+              onChange={setDashRegionFilter}
+            />
+            <MultiSelect
+              label="channels"
+              options={[{ value: "Dealer", label: "Dealer" }, { value: "Direct", label: "Direct" }]}
+              selected={dashChannelFilter}
+              onChange={setDashChannelFilter}
+            />
+            <MultiSelect
+              label="segments"
+              options={[{ value: "High Risk", label: "High Risk" }, { value: "At Risk", label: "At Risk" }, { value: "Healthy", label: "Healthy" }, { value: "Standard", label: "Standard" }]}
+              selected={dashSegmentFilter}
+              onChange={setDashSegmentFilter}
+            />
+            {(dashRegionFilter.length > 0 || dashChannelFilter.length > 0 || dashSegmentFilter.length > 0 || dashBucketFilter) && (
+              <span style={{ fontSize: 11.5, color: T.inkFaint }}>{dashFilteredContracts.length} of {contracts.length} contracts shown</span>
+            )}
+          </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-            {Object.entries(regionSummary.regions).map(([regionId, r]) => (
-              <Card key={regionId} style={{ padding: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>{r.label}</div>
-                    <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{regionId} · {r.channels.join(" + ")} channel{r.channels.length > 1 ? "s" : ""}</div>
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-                  <StatBlock label="Customers" value={r.customerCount} />
-                  <StatBlock label="Contracts" value={r.contractCount} />
-                  <StatBlock label="Total value" value={`$${(r.totalValue / 1000).toFixed(0)}k`} />
-                  <StatBlock label="Avg. risk" value={r.avgRiskScore} />
-                </div>
-                <SegmentBar counts={r.segmentCounts} />
-                <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 12, paddingTop: 10, fontSize: 11.5, color: T.inkMuted }}>
-                  {r.bucketCounts["Lost"] > 0 && <span style={{ color: T.risk, fontWeight: 600 }}>{r.bucketCounts["Lost"]} lost · </span>}
-                  {BUCKET_LABEL["10"]}: {r.bucketCounts["10"]} · {BUCKET_LABEL["30"]}: {r.bucketCounts["30"]}
-                </div>
+          {/* Milestone drill-down — same cards as Renewal Planner, own state */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 20 }}>
+            {BUCKETS.map((b) => (
+              <Card
+                key={b}
+                onClick={() => setDashBucketFilter(dashBucketFilter === b ? null : b)}
+                style={{
+                  padding: "12px 14px",
+                  borderColor: dashBucketFilter === b ? T.ink : T.border,
+                  borderWidth: dashBucketFilter === b ? 1.5 : 1,
+                }}
+              >
+                <div style={{ fontSize: 11, color: T.inkFaint, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>{BUCKET_LABEL[b]}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2, color: b === "Lost" ? T.risk : T.ink }}>{dashBucketCounts[b]}</div>
               </Card>
             ))}
           </div>
+
+          {/* Book overview: Global, then per-region */}
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Book overview</div>
+          <Card style={{ padding: 18, marginBottom: 16 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>
+              Global{dashBucketFilter ? ` — ${BUCKET_LABEL[dashBucketFilter]}` : ""}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 16 }}>
+              <StatBlock label="Customers" value={dashGlobalMetrics.customerCount} />
+              <StatBlock label="Contracts" value={dashGlobalMetrics.contractCount} />
+              <StatBlock label="Revenue" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} />
+              <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000).toFixed(0)}k`} />
+              <StatBlock label="At risk $" value={`$${(dashGlobalMetrics.atRiskValue / 1000).toFixed(0)}k`} sub="reached out, declined / no response" accent={T.risk} />
+              <StatBlock label="Potential revenue $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
+            </div>
+            <SegmentBar counts={dashGlobalMetrics.segmentCounts} />
+          </Card>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
+            {dashRegionsToShow.map((region) => {
+              const m = aggregateBookMetrics(dashFilteredContracts.filter((c) => c.region === region.id), traceByContract);
+              return (
+                <Card key={region.id} style={{ padding: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>{region.label}</div>
+                      <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{region.id} · {region.channels.join(" + ")} channel{region.channels.length > 1 ? "s" : ""}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                    <StatBlock label="Customers" value={m.customerCount} />
+                    <StatBlock label="Contracts" value={m.contractCount} />
+                    <StatBlock label="Revenue" value={`$${(m.totalValue / 1000).toFixed(0)}k`} />
+                    <StatBlock label="Margin" value={`$${(m.totalMargin / 1000).toFixed(0)}k`} />
+                    <StatBlock label="At risk $" value={`$${(m.atRiskValue / 1000).toFixed(0)}k`} accent={T.risk} />
+                    <StatBlock label="Potential revenue $" value={`$${(m.potentialRevenueValue / 1000).toFixed(0)}k`} accent={T.safe} />
+                  </div>
+                  <SegmentBar counts={m.segmentCounts} />
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Campaign performance — same filters as above, applied to trace
+              records via their own snapshotted context. */}
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Campaign performance</div>
+          <Card style={{ padding: 18, marginBottom: 16 }}>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={dashCampaignData} margin={{ top: 6, right: 12, bottom: 40, left: 0 }}>
+                <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" stroke={T.inkFaint} tick={{ fontSize: 10.5 }} interval={0} angle={-20} textAnchor="end" height={60} />
+                <YAxis stroke={T.inkFaint} tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="Assigned" fill={T.borderStrong} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Not converted" fill={T.risk} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Campaign</th><th>Assigned</th><th>Engaged</th><th>Declined</th><th>No response</th>
+                  <th>At risk $</th><th>Potential revenue $</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dashCampaignData.map((row) => (
+                  <tr key={row.name} className="rowhover">
+                    <td>{row.name}</td>
+                    <td>{row.Assigned}</td>
+                    <td>{row.Engaged}</td>
+                    <td>{row.declined}</td>
+                    <td>{row.noResponse}</td>
+                    <td style={{ color: row.atRiskValue > 0 ? T.risk : T.inkMuted }}>${row.atRiskValue.toLocaleString()}</td>
+                    <td style={{ color: row.potentialRevenueValue > 0 ? T.safe : T.inkMuted }}>${row.potentialRevenueValue.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
         </>
       )}
 
