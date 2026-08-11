@@ -572,7 +572,7 @@ function OutcomeBucketChart({ data }) {
       <div style={{ display: "flex", gap: 12, marginTop: 10, fontSize: 11 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 4, color: T.inkMuted }}><span style={{ width: 7, height: 7, borderRadius: 2, background: T.safe, display: "inline-block" }} />Engaged</span>
         <span style={{ display: "flex", alignItems: "center", gap: 4, color: T.inkMuted }}><span style={{ width: 7, height: 7, borderRadius: 2, background: T.risk, display: "inline-block" }} />Declined / no response</span>
-        <span style={{ color: T.inkFaint, marginLeft: "auto" }}>n={data.totalWithOutcome}</span>
+        <span style={{ color: T.inkFaint, marginLeft: "auto" }}>Responses={data.totalWithOutcome}</span>
       </div>
     </div>
   );
@@ -979,6 +979,7 @@ export default function ContractRenewalPOC() {
       {/* Tabs */}
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
         <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
+        <button className={`tabbtn ${tab === "technical-details" ? "active" : ""}`} onClick={() => setTab("technical-details")}>Technical Details</button>
         <button className={`tabbtn ${tab === "renewal-planner" ? "active" : ""}`} onClick={() => setTab("renewal-planner")}>Renewal Planner</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
@@ -987,24 +988,58 @@ export default function ContractRenewalPOC() {
       {tab === "overview" && (
         <div style={{ maxWidth: "90%"}}>
           <Card style={{ padding: "26px 30px", marginBottom: 18, borderTop: `3px solid ${T.brand}` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>What we're building, and how</div>
-            <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 14px" }}>One-page overview</h2>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>What we're building</div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 4px" }}>Proactive Contract Renewal</h2>
+            <p style={{ fontSize: 13.5, color: T.inkMuted, margin: "0 0 20px", fontStyle: "italic" }}>
+              Not a contract renewal prediction tool — a proactive renewal system.
+            </p>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>The problem</div>
             <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
-              CST renews thousands of HVAC service contracts across NATT, ETT, and APAC TT. Today, at-risk accounts
-              are identified reactively, if at all &mdash; there's no consistent process that surfaces margin, service
-              history, or engagement signals before a contract lapses, and no single system gives a rep a concrete
-              next action.
+              CST renews thousands of HVAC service contracts every year across NATT, ETT, and APAC TT. Today, that
+              process is reactive: an at-risk account is usually noticed only after the contract has already lapsed
+              &mdash; or not noticed at all. The signals that would have predicted the loss (a slipping SLA, a late
+              payment, a cooling NPS score, a competitor circling) exist somewhere in the business, but nothing pulls
+              them together in time for a rep to act. And when a rep does spot a risk, there's no consistent playbook
+              for what to do next, so the response depends entirely on that one person's judgment and available time.
             </p>
 
-            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>What we're trying to achieve</div>
-            <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
-              <li>Proactively identify which customer-contracts are eligible for renewal or at risk of non-renewal &mdash; with clear, explainable reasoning, not a black-box score.</li>
-              <li>Recommend a concrete retention action and draft the actual outreach content a rep can send, not just a category label.</li>
-              <li>Do this consistently across every region and both dealer/direct channels, from one engine &mdash; not three separate systems.</li>
-              <li>Make every recommendation traceable and measurable: what was scored, why, what it cost, and what happened next.</li>
-            </ul>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Why we need this solution</div>
+            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
+              Manually reviewing thousands of contracts for renewal risk doesn't scale, and it doesn't happen
+              consistently &mdash; different reps and different regions develop different habits. Contracts renew on
+              autopilot until the moment they don't, and by the time a churn shows up in the numbers, the account is
+              already gone. Without a system that checks every contract on a fixed clock, scores risk the same way
+              everywhere, and hands a rep a specific next step, retention is left to chance rather than to a process.
+            </p>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How the business benefits</div>
+            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 10px" }}>
+              This isn't a contract renewal <i>prediction</i> tool &mdash; the difference is what happens after the
+              number. It's a proactive renewal system that:
+            </p>
+            <ol style={{ fontSize: 13.5, lineHeight: 1.75, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
+              <li><b>Identifies upcoming renewal risk</b> &mdash; every contract is checked automatically against its renewal milestones, so risk surfaces weeks before a contract could lapse, not after.</li>
+              <li><b>Prioritizes accounts by business value</b> &mdash; risk alone isn't the whole story; a high-risk, high-margin account is a very different priority than a high-risk, low-margin one, so accounts are ranked by risk crossed with value, not risk in isolation.</li>
+              <li><b>Recommends an action to retain the customer</b> &mdash; each flagged account gets one concrete, grounded retention action, not just a "high risk" label.</li>
+              <li><b>Generates the outreach content</b> &mdash; the actual email a rep can send is drafted for them, referencing this specific customer's real history, so there's no blank page between "risk found" and "customer contacted."</li>
+              <li><b>Tracks the outcome</b> &mdash; every recommendation and its real-world result (engaged, declined, no response) is logged, so the business can see which actions actually retain customers, not just how many were sent.</li>
+            </ol>
+
+            <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted, fontStyle: "italic" }}>
+              For how this is actually built &mdash; the agent pipeline, the scoring model, current state, and the
+              assumptions behind it &mdash; see the Technical Details tab.
+            </div>
+          </Card>
+
+        </div>
+      )}
+
+      {tab === "technical-details" && (
+        <div style={{ maxWidth: "90%"}}>
+          <Card style={{ padding: "26px 30px", borderTop: `3px solid ${T.brand}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>How it's built</div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 14px" }}>Technical details</h2>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How we're achieving it</div>
             <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
@@ -1074,8 +1109,6 @@ export default function ContractRenewalPOC() {
             )}
           </div>
 
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Contract expiring in: </div>
-          
           {/* Bucket cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 18 }}>
             {BUCKETS.map((b) => (
@@ -1404,11 +1437,27 @@ export default function ContractRenewalPOC() {
                 <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar dataKey="Assigned" fill={T.borderStrong} radius={[4, 4, 0, 0]}>
+                  <LabelList
+                    dataKey="Assigned"
+                    content={({ x, y, width, index }) => {
+                      const row = dashCampaignData[index];
+                      if (!row) return null;
+                      console.log("Pradeep");
+                      console.log(row);
+                      return (
+                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                          {row.Assigned}
+                        </text>
+                      );
+                    }}
+                  />
+                  </Bar>
+                <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]}>
                   {/* # of responses (engaged + declined) and response rate,
                       shown above the Assigned bar since it's always the
                       tallest (assigned is a superset of every outcome). */}
                   <LabelList
-                    dataKey="Assigned"
+                    dataKey="Engaged"
                     content={({ x, y, width, index }) => {
                       const row = dashCampaignData[index];
                       if (!row) return null;
@@ -1419,9 +1468,21 @@ export default function ContractRenewalPOC() {
                       );
                     }}
                   />
-                </Bar>
-                <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Not converted" fill={T.risk} radius={[4, 4, 0, 0]} />
+                  </Bar>
+                <Bar dataKey="Not converted" fill={T.risk} radius={[4, 4, 0, 0]}>
+                  <LabelList
+                    dataKey="Not converted"
+                    content={({ x, y, width, index }) => {
+                      const row = dashCampaignData[index];
+                      if (!row) return null;
+                      return (
+                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                          {row["Not converted"]} ({row.responseRate}%)
+                        </text>
+                      );
+                    }}
+                  />
+                  </Bar>
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -1431,7 +1492,7 @@ export default function ContractRenewalPOC() {
               <thead>
                 <tr>
                   <th>Campaign</th><th>Assigned</th><th>Engaged</th><th>Declined</th><th>No response</th>
-                  <th>Revenue assigned $</th><th>At risk $</th><th>Potential revenue $</th>
+                  <th>Revenue Assigned $</th><th style={{ color: T.risk}}>At risk $</th><th style={{ color: T.safe}}>Potential revenue $</th>
                 </tr>
               </thead>
               <tbody>
