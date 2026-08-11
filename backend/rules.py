@@ -172,8 +172,8 @@ def compute_segment(risk_score: int, margin: float, median_margin: float) -> str
     """Risk crossed with value — a high-risk, high-margin account is a very
     different priority than a high-risk, low-margin one."""
     above_median = margin > median_margin
-    if (math.ceil(risk_score) >= 70) or (math.ceil(risk_score)>=60 and above_median):
-        return "High Risk" if above_median else "At Risk"
+    if (math.ceil(risk_score) >= 70) or (math.ceil(risk_score)>=50 and above_median):
+        return "High Risk" # if above_median else "At Risk"
     if math.ceil(risk_score) >= 50:
         return "At Risk"
     return "Healthy" if (math.ceil(risk_score)>=30 and above_median) else "Standard"

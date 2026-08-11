@@ -142,7 +142,7 @@ def generate_contracts() -> list[dict]:
     seq = 1
     cust_seq = 1
     name_idx = 0
-    region_counts = {"NATT": 9, "ETT": 9, "APAC_TT": 7}  # customer counts per region
+    region_counts = {"NATT": 10, "ETT": 10, "APAC_TT": 8}  # customer counts per region
     eq_types = list(PRODUCT_CATALOG.keys())
 
     for region_id, customer_count in region_counts.items():
@@ -154,9 +154,9 @@ def generate_contracts() -> list[dict]:
             dealer_id = f"DLR-{100 + (cust_seq % 12)}" if channel == "Dealer" else None
 
             for _ in range(_contract_count_for_customer()):
-                months_on_book = round(random.uniform(3, 72))
-                contract_value = round(random.uniform(8000, 145000) / 500) * 500
-                cost_to_serve_ratio = random.uniform(0.45, 0.85)
+                months_on_book = round(random.uniform(3, 60))
+                contract_value = round(random.uniform(8000, 200000) / 500) * 500
+                cost_to_serve_ratio = random.uniform(0.35, 0.55)
                 cost_to_serve = round(contract_value * cost_to_serve_ratio)
                 margin = contract_value - cost_to_serve
                 payment_lag_days = round(random.uniform(0, 55))
