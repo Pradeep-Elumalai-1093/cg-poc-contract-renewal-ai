@@ -125,12 +125,14 @@ def content_prompt(ctx: dict, recommendation: dict) -> str:
             'This is a "Direct" channel customer — the email is addressed directly to the fleet operator/customer contact. '
             'recipient_role should be "Customer".'
         )
+        contact_email = "d2d@cst.com"
     else:
         recipient_guidance = (
             'This is a "Dealer" channel customer — the sales rep does not have a direct relationship with the end customer. '
             'The email is addressed to the dealer contact, asking them to reach out to their end customer with this recommendation. '
             'recipient_role should be "Dealer".'
         )
+        contact_email = "dealer@cst.com"
     terms = ctx.get("suggested_renewal_terms", {})
     feedback = ctx.get("customer_feedback", {})
     recent_comments = feedback.get("recent_12_months", [])
@@ -149,10 +151,12 @@ Reference the suggested renewal terms naturally in the email: a {terms.get('pric
 {feedback_guidance}
 Keep the email concise (under 150 words), professional, and specific to this contract — reference real details from the context, do not invent any.
 Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
-Structure email_body as exactly three parts, in this order, separated by blank lines:
-1. One opening sentence establishing why you're reaching out, grounded in the context.
-2. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep — ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. the renewal terms to propose, a feedback acknowledgment, or the upsell if relevant. Do not use numbered lists or markdown headers.
-3. One closing sentence inviting a reply or next step.
+Structure email_body as exactly five parts, in this order, separated by blank lines:
+1. A greeting: "Hi {ctx.get('customer_name', 'there')}," on its own line.
+2. One opening sentence establishing why you're reaching out, grounded in the context.
+3. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep — ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. the renewal terms to propose, a feedback acknowledgment, or the upsell if relevant. Do not use numbered lists or markdown headers.
+4. One closing sentence inviting a reply or next step.
+5. A sign-off formatted as exactly two lines: "Thank you," then, on the next line, this contact email for any follow-up: {contact_email}. Use exactly this address — do not invent or alter it.
 
 Context:
 {json.dumps(ctx, indent=2)}
@@ -161,7 +165,7 @@ Approved recommendation:
 {json.dumps(recommendation, indent=2)}
 
 Respond with ONLY valid JSON, no markdown fences, no preamble:
-{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<opening sentence, blank line, '- ' bulleted priority-ordered points, blank line, closing sentence \u2014 plain text, no markdown headers>"}}"""
+{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<'Hi <customer_name>,' greeting, blank line, opening sentence, blank line, '- ' bulleted priority-ordered points, blank line, closing sentence, blank line, 'Thank you,' then {contact_email} on the next line \u2014 plain text, no markdown headers>"}}"""
 
 
 def ticket_summary_prompt(contract: dict) -> str:

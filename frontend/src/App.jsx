@@ -506,35 +506,47 @@ function SegmentBar({ counts }) {
   );
 }
 
-// Rolls a list of contracts up into the KPIs the Dashboard tab shows —
-// shared by the Global card and each per-region card so there's one
-// definition of "at risk $" / "potential revenue $", not one per call site.
-// "At risk" = contacted (has a trace outcome) and Declined or No response.
-// "Potential revenue" = contacted and Engaged. Matches the definitions
-// given for the Dashboard: revenue = contract value, potential revenue =
-// contract value once the customer responds Engaged.
+// Rolls a list of contracts up into the KPIs the Dashboard/Renewal Prioritization
+// tabs show — one definition of these $ metrics, not one per call site.
+// - "Potential $ at risk" = still-open contract, outreach sent, No response
+//   logged — uncertain, not yet a confirmed loss.
+// - "Lost revenue $" = either the contract already churned (bucket ===
+//   "Lost") or the customer explicitly Declined — both are a realized loss,
+//   not a maybe. Bucket-Lost contracts never get a trace outcome at all
+//   (due_contracts() excludes the "Lost" bucket from the batch pipeline
+//   entirely), so this can't be computed from outcome alone or every Lost
+//   contract would show $0 here.
+// - "Potential revenue $" = contacted and Engaged.
 function aggregateBookMetrics(list, traceByContract) {
   const customerIds = new Set();
   const segmentCounts = { "High Risk": 0, "At Risk": 0, "Healthy": 0, "Standard": 0 };
-  let totalValue = 0, totalMargin = 0, atRiskValue = 0, potentialRevenueValue = 0;
+  let totalValue = 0, totalMargin = 0, potentialAtRiskValue = 0, lostRevenueValue = 0, lostCount = 0, potentialRevenueValue = 0;
   list.forEach((c) => {
     customerIds.add(c.customerId);
     totalValue += c.contractValue;
     totalMargin += c.margin;
     segmentCounts[c.segment] = (segmentCounts[c.segment] || 0) + 1;
     const outcome = traceByContract[c.contractId]?.outcome;
-    if (outcome === "Declined" || outcome === "No response") atRiskValue += c.contractValue;
-    else if (outcome === "Engaged") potentialRevenueValue += c.contractValue;
+    if (c.bucket === "Lost" || outcome === "Declined") {
+      lostRevenueValue += c.contractValue;
+      lostCount += 1;
+    } else if (outcome === "No response") {
+      potentialAtRiskValue += c.contractValue;
+    } else if (outcome === "Engaged") {
+      potentialRevenueValue += c.contractValue;
+    }
   });
-  return { customerCount: customerIds.size, contractCount: list.length, totalValue, totalMargin, atRiskValue, potentialRevenueValue, segmentCounts };
+  return { customerCount: customerIds.size, contractCount: list.length, totalValue, totalMargin, potentialAtRiskValue, lostRevenueValue, lostCount, potentialRevenueValue, segmentCounts };
 }
 
 // Same shape/logic as the backend's /api/campaigns (assigned/engaged/
 // declined/noResponse per taxonomy name), plus the $ metrics, computed
-// over whatever trace subset the Dashboard filters produce.
+// over whatever trace subset the Dashboard filters produce. No bucket-Lost
+// case here — a trace record's milestone can never be "Lost" (same reason
+// as above), so Declined is the only source of lost revenue at this level.
 function aggregateCampaigns(traceList) {
   const result = {};
-  CAMPAIGN_TAXONOMY.forEach((t) => { result[t.name] = { assigned: 0, assignedValue: 0, engaged: 0, declined: 0, noResponse: 0, atRiskValue: 0, potentialRevenueValue: 0 }; });
+  CAMPAIGN_TAXONOMY.forEach((t) => { result[t.name] = { assigned: 0, assignedValue: 0, engaged: 0, declined: 0, noResponse: 0, potentialAtRiskValue: 0, lostRevenueValue: 0, potentialRevenueValue: 0 }; });
   traceList.forEach((r) => {
     const name = (r.recommendation || {}).campaign;
     const entry = result[name];
@@ -543,8 +555,8 @@ function aggregateCampaigns(traceList) {
     const value = (r.context || {}).contract_value_usd || 0;
     entry.assignedValue += value;
     if (r.outcome === "Engaged") { entry.engaged += 1; entry.potentialRevenueValue += value; }
-    else if (r.outcome === "Declined") { entry.declined += 1; entry.atRiskValue += value; }
-    else if (r.outcome === "No response") { entry.noResponse += 1; entry.atRiskValue += value; }
+    else if (r.outcome === "Declined") { entry.declined += 1; entry.lostRevenueValue += value; }
+    else if (r.outcome === "No response") { entry.noResponse += 1; entry.potentialAtRiskValue += value; }
   });
   return result;
 }
@@ -614,12 +626,12 @@ export default function ContractRenewalPOC() {
   const [modelInfo, setModelInfo] = useState(null);
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
-  const [tab, setTab] = useState("renewal-planner");
+  const [tab, setTab] = useState("renewal-prioritization");
   const [bucketFilter, setBucketFilter] = useState(null);
   const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
   // Dashboard tab's own Global -> Regional -> Segment -> Milestone drill-down.
-  // Kept separate from the Renewal Planner filters above — the two tabs
+  // Kept separate from the Renewal Prioritization filters above — the two tabs
   // answer different questions, so filtering one shouldn't silently filter
   // the other when you switch tabs.
   const [dashRegionFilter, setDashRegionFilter] = useState([]);
@@ -851,10 +863,23 @@ export default function ContractRenewalPOC() {
         name: t.name, Assigned: s.assigned, Engaged: s.engaged, "Not converted": s.declined + s.noResponse,
         declined: s.declined, noResponse: s.noResponse, responseCount,
         responseRate: s.assigned ? Math.round((responseCount / s.assigned) * 100) : 0,
-        assignedValue: s.assignedValue, atRiskValue: s.atRiskValue, potentialRevenueValue: s.potentialRevenueValue,
+        assignedValue: s.assignedValue, potentialAtRiskValue: s.potentialAtRiskValue, lostRevenueValue: s.lostRevenueValue, potentialRevenueValue: s.potentialRevenueValue,
       };
     });
   }, [dashFilteredTrace]);
+
+  // Totals across every campaign, for the summary stat row above the chart —
+  // sums dashCampaignData rather than re-deriving from dashFilteredTrace, so
+  // there's one pass over the trace data, not two.
+  const dashCampaignTotals = useMemo(() => {
+    return dashCampaignData.reduce((acc, row) => {
+      acc.assigned += row.Assigned;
+      acc.engaged += row.Engaged;
+      acc.declined += row.declined;
+      acc.noResponse += row.noResponse;
+      return acc;
+    }, { assigned: 0, engaged: 0, declined: 0, noResponse: 0 });
+  }, [dashCampaignData]);
 
   const worklist = useMemo(() => {
     return [...filteredContracts].sort((a, b) => b.riskScore - a.riskScore);
@@ -980,7 +1005,7 @@ export default function ContractRenewalPOC() {
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
         <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
         <button className={`tabbtn ${tab === "technical-details" ? "active" : ""}`} onClick={() => setTab("technical-details")}>Technical Details</button>
-        <button className={`tabbtn ${tab === "renewal-planner" ? "active" : ""}`} onClick={() => setTab("renewal-planner")}>Renewal Planner</button>
+        <button className={`tabbtn ${tab === "renewal-prioritization" ? "active" : ""}`} onClick={() => setTab("renewal-prioritization")}>Renewal Prioritization</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
       </div>
@@ -1087,7 +1112,7 @@ export default function ContractRenewalPOC() {
         </div>
       )}
 
-      {tab === "renewal-planner" && (
+      {tab === "renewal-prioritization" && (
         <>
           {/* Global filters */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
@@ -1192,12 +1217,14 @@ export default function ContractRenewalPOC() {
             <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Portfolio KPIs</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
-                <StatBlock label="Lost" value={filteredContracts.filter((c) => c.bucket === "Lost").length} sub="past expiry" accent={T.risk} />
+                <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.risk} />
+                <StatBlock label="Total contracts" value={plannerBookMetrics.contractCount} />
+                <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
                 <StatBlock label="Recommendations run" value={metrics.totalRuns} sub={`of ${contracts.length} contracts`} />
                 <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} />
-                <StatBlock label="At risk $" value={`$${(plannerBookMetrics.atRiskValue / 1000).toFixed(0)}k`} sub="reached out, declined / no response" accent={T.risk} />
+                <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="reached out, no response yet" accent={T.amber} />
+                <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
                 <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
               </div>
               <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted }}>
@@ -1326,7 +1353,7 @@ export default function ContractRenewalPOC() {
                     </tr>
                   ))}
                   {trace.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet — run the daily batch from the `Renewal Planner` tab.</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet — run the daily batch from the `Renewal Prioritization` tab.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1337,7 +1364,7 @@ export default function ContractRenewalPOC() {
 
       {tab === "dashboard" && (
         <>
-          {/* Drill-down filters — same chip pattern as Renewal Planner, plus
+          {/* Drill-down filters — same chip pattern as Renewal Prioritization, plus
               a Segment filter. No filter selected = Global; adding region/
               channel/segment/bucket chips narrows down to Regional / Segment /
               Milestone level, all using the same underlying data. */}
@@ -1366,7 +1393,7 @@ export default function ContractRenewalPOC() {
             )}
           </div>
 
-          {/* Milestone drill-down — same cards as Renewal Planner, own state */}
+          {/* Milestone drill-down — same cards as Renewal Prioritization, own state */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 20 }}>
             {BUCKETS.map((b) => (
               <Card
@@ -1391,12 +1418,13 @@ export default function ContractRenewalPOC() {
             <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>
               Global{dashBucketFilter ? ` — ${BUCKET_LABEL[dashBucketFilter]}` : ""}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 16, marginBottom: 16 }}>
               <StatBlock label="Customers" value={dashGlobalMetrics.customerCount} />
               <StatBlock label="Contracts" value={dashGlobalMetrics.contractCount} />
               <StatBlock label="Revenue" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} />
               <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000).toFixed(0)}k`} />
-              <StatBlock label="At risk $" value={`$${(dashGlobalMetrics.atRiskValue / 1000).toFixed(0)}k`} sub="reached out, declined / no response" accent={T.risk} />
+              <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="reached out, no response yet" accent={T.amber} />
+              <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
               <StatBlock label="Potential revenue $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
             </div>
             <SegmentBar counts={dashGlobalMetrics.segmentCounts} />
@@ -1418,7 +1446,8 @@ export default function ContractRenewalPOC() {
                     <StatBlock label="Contracts" value={m.contractCount} />
                     <StatBlock label="Revenue" value={`$${(m.totalValue / 1000).toFixed(0)}k`} />
                     <StatBlock label="Margin" value={`$${(m.totalMargin / 1000).toFixed(0)}k`} />
-                    <StatBlock label="At risk $" value={`$${(m.atRiskValue / 1000).toFixed(0)}k`} accent={T.risk} />
+                    <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000).toFixed(0)}k`} accent={T.amber} />
+                    <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000).toFixed(0)}k`} accent={T.risk} />
                     <StatBlock label="Potential revenue $" value={`$${(m.potentialRevenueValue / 1000).toFixed(0)}k`} accent={T.safe} />
                   </div>
                   <SegmentBar counts={m.segmentCounts} />
@@ -1430,6 +1459,15 @@ export default function ContractRenewalPOC() {
           {/* Campaign performance — same filters as above, applied to trace
               records via their own snapshotted context. */}
           <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Campaign performance</div>
+          <Card style={{ padding: 18, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
+              <StatBlock label="Contracts in filter" value={dashFilteredContracts.length} />
+              <StatBlock label="Assigned" value={dashCampaignTotals.assigned} sub="recommended action" />
+              <StatBlock label="Engaged" value={dashCampaignTotals.engaged} sub="made response" accent={T.safe} />
+              <StatBlock label="Declined" value={dashCampaignTotals.declined} accent={T.risk} />
+              <StatBlock label="No response" value={dashCampaignTotals.noResponse} accent={T.amber} />
+            </div>
+          </Card>
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={dashCampaignData} margin={{ top: 24, right: 12, bottom: 40, left: 0 }}>
@@ -1492,7 +1530,7 @@ export default function ContractRenewalPOC() {
               <thead>
                 <tr>
                   <th>Campaign</th><th>Assigned</th><th>Engaged</th><th>Declined</th><th>No response</th>
-                  <th>Revenue Assigned $</th><th style={{ color: T.risk}}>At risk $</th><th style={{ color: T.safe}}>Potential revenue $</th>
+                  <th>Revenue Assigned $</th><th style={{ color: T.amber}}>Potential $ at risk</th><th style={{ color: T.risk}}>Lost revenue $</th><th style={{ color: T.safe}}>Potential revenue $</th>
                 </tr>
               </thead>
               <tbody>
@@ -1504,7 +1542,8 @@ export default function ContractRenewalPOC() {
                     <td>{row.declined}</td>
                     <td>{row.noResponse}</td>
                     <td>${row.assignedValue.toLocaleString()}</td>
-                    <td style={{ color: row.atRiskValue > 0 ? T.risk : T.inkMuted }}>${row.atRiskValue.toLocaleString()}</td>
+                    <td style={{ color: row.potentialAtRiskValue > 0 ? T.amber : T.inkMuted }}>${row.potentialAtRiskValue.toLocaleString()}</td>
+                    <td style={{ color: row.lostRevenueValue > 0 ? T.risk : T.inkMuted }}>${row.lostRevenueValue.toLocaleString()}</td>
                     <td style={{ color: row.potentialRevenueValue > 0 ? T.safe : T.inkMuted }}>${row.potentialRevenueValue.toLocaleString()}</td>
                   </tr>
                 ))}
