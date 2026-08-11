@@ -586,6 +586,30 @@ function OutcomeBucketChart({ data }) {
         <span style={{ display: "flex", alignItems: "center", gap: 4, color: T.inkMuted }}><span style={{ width: 7, height: 7, borderRadius: 2, background: T.risk, display: "inline-block" }} />Declined / no response</span>
         <span style={{ color: T.inkFaint, marginLeft: "auto" }}>Responses={data.totalWithOutcome}</span>
       </div>
+
+      {/* $ lost (Declined only) and $ converted (Engaged) per risk bucket —
+          same figures as the campaign table's Lost revenue $ / Potential
+          revenue $, just broken down by risk score instead of by campaign. */}
+      <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 10, paddingTop: 8 }}>
+        <table>
+          <thead>
+            <tr>
+              <th style={{ fontSize: 10 }}>Risk score</th>
+              <th style={{ fontSize: 10, color: T.risk }}>$ Lost</th>
+              <th style={{ fontSize: 10, color: T.safe }}>$ Converted</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.buckets.map((label, i) => (
+              <tr key={label}>
+                <td style={{ fontSize: 11, fontFamily: "ui-monospace, monospace" }}>{label}</td>
+                <td style={{ fontSize: 11, color: data.revenueLost[i] > 0 ? T.risk : T.inkMuted }}>${data.revenueLost[i].toLocaleString()}</td>
+                <td style={{ fontSize: 11, color: data.revenueConverted[i] > 0 ? T.safe : T.inkMuted }}>${data.revenueConverted[i].toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -775,6 +799,8 @@ export default function ContractRenewalPOC() {
     const labels = ["0-19", "20-39", "40-59", "60-79", "80-100"];
     const engaged = [0, 0, 0, 0, 0];
     const notEngaged = [0, 0, 0, 0, 0];
+    const revenueLost = [0, 0, 0, 0, 0];       // Declined only — realized loss, not "no response" (uncertain)
+    const revenueConverted = [0, 0, 0, 0, 0];  // Engaged
     let totalWithOutcome = 0;
 
     trace.forEach((r) => {
@@ -787,16 +813,18 @@ export default function ContractRenewalPOC() {
       const score = ctx.risk_score;
       if (score == null) return;
       totalWithOutcome++;
+      const value = ctx.contract_value_usd || 0;
       for (let i = 0; i < bucketEdges.length; i++) {
         const [lo, hi] = bucketEdges[i];
         if (score >= lo && score <= hi) {
-          if (r.outcome === "Engaged") engaged[i]++; else notEngaged[i]++;
+          if (r.outcome === "Engaged") { engaged[i]++; revenueConverted[i] += value; }
+          else { notEngaged[i]++; if (r.outcome === "Declined") revenueLost[i] += value; }
           break;
         }
       }
     });
 
-    return { buckets: labels, engaged, notEngaged, totalWithOutcome };
+    return { buckets: labels, engaged, notEngaged, revenueLost, revenueConverted, totalWithOutcome };
   }, [trace, regionFilter, channelFilter, bucketFilter]);
 
   const bucketCounts = useMemo(() => {
@@ -860,8 +888,14 @@ export default function ContractRenewalPOC() {
       const s = agg[t.name];
       const responseCount = s.engaged + s.declined; // customer responded, either way — same definition the old Campaigns tab used
       return {
-        name: t.name, Assigned: s.assigned, Engaged: s.engaged, "Not converted": s.declined + s.noResponse,
+        name: t.name, Assigned: s.assigned, Engaged: s.engaged, Declined: s.declined, "No response": s.noResponse,
         declined: s.declined, noResponse: s.noResponse, responseCount,
+        // Each bar's own rate is that bar's count over Assigned — previously
+        // every bar showed the same combined (engaged+declined)/assigned
+        // figure, which was only ever correct for one of the three bars.
+        engagedRate: s.assigned ? Math.round((s.engaged / s.assigned) * 100) : 0,
+        declinedRate: s.assigned ? Math.round((s.declined / s.assigned) * 100) : 0,
+        noResponseRate: s.assigned ? Math.round((s.noResponse / s.assigned) * 100) : 0,
         responseRate: s.assigned ? Math.round((responseCount / s.assigned) * 100) : 0,
         assignedValue: s.assignedValue, potentialAtRiskValue: s.potentialAtRiskValue, lostRevenueValue: s.lostRevenueValue, potentialRevenueValue: s.potentialRevenueValue,
       };
@@ -1226,15 +1260,16 @@ export default function ContractRenewalPOC() {
             <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Portfolio KPIs</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.risk} />
                 <StatBlock label="Total contracts" value={plannerBookMetrics.contractCount} />
                 <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
-                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
-                <StatBlock label="Actions needed" value={actionsNeeded} sub={`of ${plannerBookMetrics.contractCount} contracts`} accent={actionsNeeded > 0 ? T.risk : undefined} />
+                <StatBlock label="High risk contracts" value={filteredContracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
+                <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.amber} />
+                <StatBlock label="Actions needed" value={actionsNeeded} sub={`of ${plannerBookMetrics.contractCount} contracts`} accent={actionsNeeded > 0 ? T.brand : undefined} />
                 <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} />
+                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+                <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
                 <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="reached out, no response yet" accent={T.amber} />
                 <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
-                <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
               </div>
             </Card>
 
@@ -1495,31 +1530,42 @@ export default function ContractRenewalPOC() {
                   />
                   </Bar>
                 <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]}>
-                  {/* # of responses (engaged + declined) and response rate,
-                      shown above the Assigned bar since it's always the
-                      tallest (assigned is a superset of every outcome). */}
                   <LabelList
                     dataKey="Engaged"
                     content={({ x, y, width, index }) => {
                       const row = dashCampaignData[index];
-                      if (!row) return null;
+                      if (!row || !row.Engaged) return null;
                       return (
                         <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
-                          {row.responseCount} ({row.responseRate}%)
+                          {row.Engaged} ({row.engagedRate}%)
                         </text>
                       );
                     }}
                   />
                   </Bar>
-                <Bar dataKey="Not converted" fill={T.risk} radius={[4, 4, 0, 0]}>
+                <Bar dataKey="Declined" fill={T.risk} radius={[4, 4, 0, 0]}>
                   <LabelList
-                    dataKey="Not converted"
+                    dataKey="Declined"
                     content={({ x, y, width, index }) => {
                       const row = dashCampaignData[index];
-                      if (!row) return null;
+                      if (!row || !row.Declined) return null;
                       return (
                         <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
-                          {row["Not converted"]} ({row.responseRate}%)
+                          {row.Declined} ({row.declinedRate}%)
+                        </text>
+                      );
+                    }}
+                  />
+                  </Bar>
+                <Bar dataKey="No response" fill={T.amber} radius={[4, 4, 0, 0]}>
+                  <LabelList
+                    dataKey="No response"
+                    content={({ x, y, width, index }) => {
+                      const row = dashCampaignData[index];
+                      if (!row || !row.noResponse) return null;
+                      return (
+                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                          {row.noResponse} ({row.noResponseRate}%)
                         </text>
                       );
                     }}
