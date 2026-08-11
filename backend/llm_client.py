@@ -139,7 +139,7 @@ async def _call_openrouter(prompt_text: str) -> tuple[str, int, int]:
 
 
 async def _call_vllm(prompt_text: str) -> tuple[str, int, int]:
-    base_url = os.environ.get("VLLM_BASE_URL", "http://localhost:8000")
+    base_url = os.environ.get("VLLM_BASE_URL", "http://localhost:8001")
     model = os.environ.get("VLLM_MODEL", "")
     if not model:
         raise LLMError("VLLM_MODEL is not set in .env — set it to the model name you launched vLLM with.")

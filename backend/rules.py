@@ -199,7 +199,7 @@ def suggested_renewal_terms(contract: dict) -> dict:
 MODEL_INFO = {
     "riskModel": {
         "name": "At-Risk Prediction Model",
-        "type": "Rule-based weighted scorecard",
+        "type": "Rule-based Weighted Scorecard",
         "description": (
             "Given a customer-contract's service, financial, and engagement data, this model "
             "produces a 0-100 risk score and a ranked list of driver features explaining why. "
@@ -212,7 +212,7 @@ MODEL_INFO = {
     },
     "valueModel": {
         "name": "Customer Value Classification",
-        "type": "Rule-based (risk score \u00d7 margin vs. book median)",
+        "type": "Rule-based (Risk Score \u00d7 Margin vs. Book Median)",
         "description": (
             "Crosses the risk score against contract margin relative to the book median to assign "
             "one of four segments (High Risk, At Risk, Healthy, Standard). A high-risk, high-margin "

@@ -1120,7 +1120,7 @@ export default function ContractRenewalPOC() {
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How we're achieving it</div>
             <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
               <li><b>Rule-based risk scorecard</b> &mdash; 11 weighted factors (SLA breaches, payment behavior, NPS, competitor activity, and more) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product.</li>
-              <li><b>Risk &times; value segmentation</b> &mdash; crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
+              <li><b>Risk &times; value Segmentation</b> &mdash; crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
               <li><b>Six-agent pipeline</b> &mdash; Service Ticket Summary, Customer Summary & Customer Feedback Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
               <li><b>Full traceability</b> &mdash; every recommendation logs its prompts, scores, retries, latency, and token cost, inspectable end to end.</li>
               <li><b>Swappable LLM provider</b> &mdash; Claude API or a locally-hosted vLLM model, switched with one configuration change.</li>
@@ -1140,10 +1140,10 @@ export default function ContractRenewalPOC() {
               <li>Renewal milestones are 90/60/45/30/10 days to expiry - not yet validated against CST's actual renewal cadence.</li>
               <li>The 5-item retention action taxonomy is our proposal, not CST's existing playbook (none was provided).</li>
               <li>The risk model is deliberately rule-based, not trained ML - labeled honestly as a scorecard standing in for where a real model would go.</li>
-              <li>Risk x value segmentation thresholds (score ≥50/30, margin vs. book median) are illustrative starting points, not calibrated.</li>
+              <li>Risk x Value Segmentation thresholds (score ≥50/30, margin vs. book median) are illustrative starting points, not calibrated.</li>
               <li>All data is synthetic - customers, contracts, service tickets, financials, and engagement signals are generated, not sourced from CST systems.</li>
               <li>The product catalog (5 equipment types) is representative, not CST's actual catalog.</li>
-              <li>The "campaign response by risk bucket" chart is a live proxy from logged outcomes, not a validated historical renewal backtest - no ground truth exists to validate against.</li>
+              <li>The "Campaign Response by Risk Bucket" chart is a live proxy from logged outcomes, not a validated historical renewal backtest - no ground truth exists to validate against.</li>
               <li>Suggested renewal terms (price move %, term length) are rule-based suggestions feeding the draft email, not negotiated or approved figures.</li>
               <li>Dealer-channel visibility is assumed limited - the system may only see what the dealer relationship exposes, not necessarily the true end customer.</li>
               <li>No database - all state is in-memory and resets on backend restart; a POC simplification, not a production data-architecture recommendation.</li>
@@ -1209,8 +1209,8 @@ export default function ContractRenewalPOC() {
           <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 16, marginBottom: 18 }}>
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value segmentation</div>
-              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk score vs. Contract value ($) — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value Segmentation</div>
+              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk Score vs. Contract Value ($) — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
               <ResponsiveContainer width="100%" height={280}>
                 <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
                   <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
@@ -1282,7 +1282,7 @@ export default function ContractRenewalPOC() {
             </Card>
 
             <Card style={{ padding: 16 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign response by risk bucket</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign Response by Risk Bucket</div>
               <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
                 Live signal from logged outcomes, reflecting the region/channel filters above.
               </div>
