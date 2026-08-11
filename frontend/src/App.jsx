@@ -3,7 +3,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
   BarChart, Bar, Legend
 } from "recharts";
-import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
+import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send } from "lucide-react";
 import { api } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -21,7 +21,7 @@ const T = {
   ink: "#161B22",
   inkMuted: "#5B6472",
   inkFaint: "#8A93A3",
-  border: "#dfe3e8",
+  border: "#DFE3E8",
   borderStrong: "#C7CCD4",
   risk: "#C1502E",
   riskBg: "#FBEBE5",
@@ -211,9 +211,7 @@ function ExchangeBlock({ label, prompt, raw, latencyMs }) {
   );
 }
 
-function DraftContent({ content, contentError }) {
-  const [copied, setCopied] = useState(false);
-
+function DraftContent({ content, contentError, customerName }) {
   if (contentError) {
     return (
       <>
@@ -226,12 +224,15 @@ function DraftContent({ content, contentError }) {
   }
   if (!content) return null;
 
-  const copyText = `Subject: ${content.email_subject}\n\n${content.email_body}`;
-  const copy = () => {
-    navigator.clipboard.writeText(copyText).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
+  // No real recipient email exists anywhere in this POC's data model (synthetic
+  // customers and dealers have no email field) — a slugified customer name at
+  // a placeholder domain stands in for it, per the agreed placeholder convention.
+  // This opens whatever the browser/OS has set as the default mail handler
+  // (Outlook, if that's the user's default) with the fields below prefilled.
+  const recipientEmail = `${(customerName || "customer").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}@client.com`;
+  const sendEmail = () => {
+    const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(content.email_subject)}&body=${encodeURIComponent(content.email_body)}`;
+    window.location.href = mailto;
   };
 
   return (
@@ -242,14 +243,14 @@ function DraftContent({ content, contentError }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <Badge text={`Addressed to: ${content.recipient_role}`} color={T.info} bg={T.infoBg} />
           <button
-            onClick={copy}
+            onClick={sendEmail}
             style={{
-              display: "flex", alignItems: "center", gap: 5, border: `1px solid ${T.border}`, background: copied ? T.safeBg : "#fff",
-              color: copied ? T.safe : T.inkMuted, borderRadius: 6, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 5, border: `1px solid ${T.border}`, background: "#fff",
+              color: T.inkMuted, borderRadius: 6, padding: "5px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
             }}
           >
-            {copied ? <ClipboardCheck size={13} /> : <Copy size={13} />}
-            {copied ? "Copied" : "Copy email"}
+            <Send size={13} />
+            Send email
           </button>
         </div>
         <div style={{ border: `1px solid ${T.border}`, borderRadius: 7, overflow: "hidden" }}>
@@ -1522,7 +1523,7 @@ export default function ContractRenewalPOC() {
                   )}
                 </Card>
 
-                <DraftContent content={selectedTrace.content} contentError={selectedTrace.contentError} />
+                <DraftContent content={selectedTrace.content} contentError={selectedTrace.contentError} customerName={selectedContract.customerName} />
 
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>AI Result Evaluation</div>
                 <Card style={{ padding: 14, marginBottom: 14 }}>

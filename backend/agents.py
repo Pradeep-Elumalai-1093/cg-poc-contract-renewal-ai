@@ -149,6 +149,10 @@ Reference the suggested renewal terms naturally in the email: a {terms.get('pric
 {feedback_guidance}
 Keep the email concise (under 150 words), professional, and specific to this contract — reference real details from the context, do not invent any.
 Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
+Structure email_body as exactly three parts, in this order, separated by blank lines:
+1. One opening sentence establishing why you're reaching out, grounded in the context.
+2. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep — ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. the renewal terms to propose, a feedback acknowledgment, or the upsell if relevant. Do not use numbered lists or markdown headers.
+3. One closing sentence inviting a reply or next step.
 
 Context:
 {json.dumps(ctx, indent=2)}
@@ -157,7 +161,7 @@ Approved recommendation:
 {json.dumps(recommendation, indent=2)}
 
 Respond with ONLY valid JSON, no markdown fences, no preamble:
-{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<the full email body, plain text, no markdown>"}}"""
+{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<opening sentence, blank line, '- ' bulleted priority-ordered points, blank line, closing sentence \u2014 plain text, no markdown headers>"}}"""
 
 
 def ticket_summary_prompt(contract: dict) -> str:
