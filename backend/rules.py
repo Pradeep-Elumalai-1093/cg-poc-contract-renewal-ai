@@ -169,11 +169,11 @@ def compute_segment(risk_score: int, margin: float, median_margin: float) -> str
     """Risk crossed with value — a high-risk, high-margin account is a very
     different priority than a high-risk, low-margin one."""
     above_median = margin > median_margin
-    if risk_score >= 50:
+    if risk_score >= 70:
         return "High Risk" if above_median else "At Risk"
-    if risk_score >= 30:
+    if risk_score >= 50:
         return "At Risk"
-    return "Healthy" if above_median else "Standard"
+    return "Healthy" if (risk_score>=30 and above_median) else "Standard"
 
 
 def suggested_renewal_terms(contract: dict) -> dict:

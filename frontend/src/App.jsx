@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
-  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine
+  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea
 } from "recharts";
 import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Copy, ClipboardCheck } from "lucide-react";
 import { api } from "./api.js";
@@ -49,8 +49,12 @@ const T = {
 // isn't exposed over the API). If that threshold changes server-side, this
 // line and the backend's segment cutoff will drift apart.
 const RISK_QUADRANT_THRESHOLD = 50;
-const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.inkFaint };
-const SEGMENT_BG = { "High Risk": T.riskBg, "At Risk": T.amberBg, "Healthy": T.safeBg, "Standard": T.surfaceSunken };
+// Red / Yellow / Green / Blue per the risk x value quadrant scheme. Reuses
+// existing theme tokens (T.info/T.infoBg — already the app's blue, used for
+// "Medium" priority elsewhere) rather than introducing new colors. Changing
+// this one map recolors every segment badge in the app, not just the scatter.
+const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.info };
+const SEGMENT_BG = { "High Risk": T.riskBg, "At Risk": T.amberBg, "Healthy": T.safeBg, "Standard": T.infoBg };
 const BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"];
 const BUCKET_LABEL = {
   ">90": "Not yet due", "90": "≤90 days", "60": "≤60 days",
@@ -546,7 +550,7 @@ export default function ContractRenewalPOC() {
   const [ticketSummaries, setTicketSummaries] = useState({});
   const [customerSummaries, setCustomerSummaries] = useState({});
   const [regionSummary, setRegionSummary] = useState(null);
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState("renewal-planner");
   const [bucketFilter, setBucketFilter] = useState(null);
   const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
@@ -660,7 +664,9 @@ export default function ContractRenewalPOC() {
     }
   }, []);
 
-  const filteredContracts = useMemo(() => {
+  // Region/channel only — bucket cards need this unfiltered by bucketFilter
+  // itself, otherwise selecting one bucket would zero out every other card.
+  const regionChannelContracts = useMemo(() => {
     return contracts.filter((c) => {
       const regionOk = regionFilter.length === 0 || regionFilter.includes(c.region);
       const channelOk = channelFilter.length === 0 || channelFilter.includes(c.channel);
@@ -668,12 +674,20 @@ export default function ContractRenewalPOC() {
     });
   }, [contracts, regionFilter, channelFilter]);
 
+  // The actual page-wide filter: region + channel + bucket. Everything that
+  // should respect the bucket-card click reads from this, not from
+  // regionChannelContracts, so the filter only has to be defined once.
+  const filteredContracts = useMemo(() => {
+    if (!bucketFilter) return regionChannelContracts;
+    return regionChannelContracts.filter((c) => c.bucket === bucketFilter);
+  }, [regionChannelContracts, bucketFilter]);
+
   // Computed client-side (not fetched from /api/outcome-by-risk-bucket) so it
-  // stays in sync with the region/channel filters instantly. Each trace
-  // record's own context.region/context.channel is a snapshot taken at the
-  // time that recommendation ran, which is what filtering should key off —
-  // not the contract's current region (though those are the same in
-  // practice, since region doesn't change after generation).
+  // stays in sync with the region/channel/bucket filters instantly. Each trace
+  // record's own context.region/context.channel/context.milestone is a
+  // snapshot taken at the time that recommendation ran, which is what
+  // filtering should key off — not the contract's current fields (though
+  // those are the same in practice, since none of them change after generation).
   const filteredOutcomeByRiskBucket = useMemo(() => {
     const bucketEdges = [[0, 19], [20, 39], [40, 59], [60, 79], [80, 100]];
     const labels = ["0-19", "20-39", "40-59", "60-79", "80-100"];
@@ -686,7 +700,8 @@ export default function ContractRenewalPOC() {
       const ctx = r.context || {};
       const regionOk = regionFilter.length === 0 || regionFilter.includes(ctx.region);
       const channelOk = channelFilter.length === 0 || channelFilter.includes(ctx.channel);
-      if (!regionOk || !channelOk) return;
+      const bucketOk = !bucketFilter || ctx.milestone === bucketFilter;
+      if (!regionOk || !channelOk || !bucketOk) return;
       const score = ctx.risk_score;
       if (score == null) return;
       totalWithOutcome++;
@@ -700,20 +715,18 @@ export default function ContractRenewalPOC() {
     });
 
     return { buckets: labels, engaged, notEngaged, totalWithOutcome };
-  }, [trace, regionFilter, channelFilter]);
+  }, [trace, regionFilter, channelFilter, bucketFilter]);
 
   const bucketCounts = useMemo(() => {
     const c = {};
     BUCKETS.forEach((b) => (c[b] = 0));
-    filteredContracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
+    regionChannelContracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
     return c;
-  }, [filteredContracts]);
+  }, [regionChannelContracts]);
 
   const worklist = useMemo(() => {
-    let list = filteredContracts;
-    if (bucketFilter) list = list.filter((c) => c.bucket === bucketFilter);
-    return [...list].sort((a, b) => b.riskScore - a.riskScore);
-  }, [filteredContracts, bucketFilter]);
+    return [...filteredContracts].sort((a, b) => b.riskScore - a.riskScore);
+  }, [filteredContracts]);
 
   const scatterData = useMemo(() => filteredContracts.map((c) => ({
     x: c.riskScore, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
@@ -727,6 +740,14 @@ export default function ContractRenewalPOC() {
     const mid = Math.floor(vals.length / 2);
     return vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
   }, [filteredContracts]);
+
+  // Explicit y-axis ceiling (rounded up, +10% headroom) so the quadrant tint
+  // rectangles and the axis domain agree exactly — recharts' auto domain
+  // wouldn't necessarily line up with a hand-picked ReferenceArea bound.
+  const scatterYMax = useMemo(() => {
+    const maxVal = Math.max(1, ...scatterData.map((d) => d.y));
+    return Math.ceil((maxVal * 1.1) / 5000) * 5000;
+  }, [scatterData]);
 
   const selectedContract = contracts.find((c) => c.contractId === selected);
   const portfolioContracts = selectedContract
@@ -797,7 +818,6 @@ export default function ContractRenewalPOC() {
           <div>
             <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Carrier Global</div>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
-            <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 3 }}>CST | Art Of Possibility</div>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -820,7 +840,7 @@ export default function ContractRenewalPOC() {
       {/* Tabs */}
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
         <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
-        <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
+        <button className={`tabbtn ${tab === "renewal-planner" ? "active" : ""}`} onClick={() => setTab("renewal-planner")}>Renewal Planner</button>
         <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
         <button className={`tabbtn ${tab === "campaigns" ? "active" : ""}`} onClick={() => setTab("campaigns")}>Campaigns</button>
         <button className={`tabbtn ${tab === "summary" ? "active" : ""}`} onClick={() => setTab("summary")}>Global &amp; Regions</button>
@@ -894,7 +914,7 @@ export default function ContractRenewalPOC() {
         </div>
       )}
 
-      {tab === "dashboard" && (
+      {tab === "renewal-planner" && (
         <>
           {/* Global filters */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
@@ -938,20 +958,37 @@ export default function ContractRenewalPOC() {
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value segmentation</div>
-              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk score vs. contract value — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median value</div>
+              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk score vs. Contract value ($) — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
               <ResponsiveContainer width="100%" height={280}>
                 <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
                   <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
+                  {/* Quadrant tints — reuse each segment's existing badge
+                      background color, so this stays in sync with SEGMENT_BG
+                      instead of being a second, hand-maintained color list. */}
+                  <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" />
+                  <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["High Risk"]} fillOpacity={1} stroke="none" />
+                  <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={0} y2={medianContractValue} fill={SEGMENT_BG["At Risk"]} fillOpacity={1} stroke="none" />
+                  <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={0} y2={medianContractValue} fill={SEGMENT_BG["Standard"]} fillOpacity={1} stroke="none" />
                   <XAxis type="number" dataKey="x" name="Risk score" domain={[0, 100]} stroke={T.inkFaint} tick={{ fontSize: 11 }} />
-                  <YAxis type="number" dataKey="y" name="Contract value" stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+                  <YAxis type="number" dataKey="y" name="Contract value ($)" domain={[0, scatterYMax]} stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
                   <ZAxis range={[55, 55]} />
                   <ReferenceLine x={RISK_QUADRANT_THRESHOLD} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Risk " + RISK_QUADRANT_THRESHOLD, position: "insideTopLeft", fill: T.inkFaint, fontSize: 10 }} />
-                  <ReferenceLine y={medianContractValue} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Median value", position: "insideBottomRight", fill: T.inkFaint, fontSize: 10 }} />
+                  <ReferenceLine y={medianContractValue} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Median value ($)", position: "insideBottomRight", fill: T.inkFaint, fontSize: 10 }} />
                   <Tooltip
                     cursor={{ strokeDasharray: "3 3" }}
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }}
-                    formatter={(value, key) => key === "y" ? [`$${value.toLocaleString()}`, "Contract value"] : [value, "Risk score"]}
-                    labelFormatter={() => ""}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0].payload; // the original scatterData point: { x, y, tier, id, name }
+                      return (
+                        <div style={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, padding: "8px 10px" }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
+                          <div style={{ color: T.inkMuted }}>{d.id}</div>
+                          <div style={{ marginTop: 4 }}>Risk score: {d.x}</div>
+                          <div style={{ marginTop: 4 }}>Tier: {d.tier}</div>
+                          <div>Contract value ($): ${d.y.toLocaleString()}</div>
+                        </div>
+                      );
+                    }}
                   />
                   {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
                     <Scatter
@@ -980,7 +1017,7 @@ export default function ContractRenewalPOC() {
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Portfolio KPIs</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
-                <StatBlock label="Lost" value={bucketCounts["Lost"]} sub="past expiry" accent={T.risk} />
+                <StatBlock label="Lost" value={filteredContracts.filter((c) => c.bucket === "Lost").length} sub="past expiry" accent={T.risk} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
                 <StatBlock label="Recommendations run" value={metrics.totalRuns} sub={`of ${contracts.length} contracts`} />
               </div>
@@ -1110,7 +1147,7 @@ export default function ContractRenewalPOC() {
                     </tr>
                   ))}
                   {trace.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet — run the daily batch from the Dashboard tab.</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet — run the daily batch from the `Renewal Planner` tab.</td></tr>
                   )}
                 </tbody>
               </table>
