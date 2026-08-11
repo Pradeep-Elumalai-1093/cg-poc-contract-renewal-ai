@@ -663,6 +663,10 @@ export default function ContractRenewalPOC() {
   const [dashSegmentFilter, setDashSegmentFilter] = useState([]);
   const [dashBucketFilter, setDashBucketFilter] = useState(null);
   const [selected, setSelected] = useState(null);
+  // Which tab is active inside the contract detail drawer — reset to the
+  // default whenever a different contract is opened, so switching contracts
+  // doesn't leave you stranded on a tab that made sense for the last one.
+  const [drawerTab, setDrawerTab] = useState("action");
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [apiError, setApiError] = useState(null);
@@ -739,6 +743,10 @@ export default function ContractRenewalPOC() {
     }, 700);
     return () => clearInterval(interval);
   }, [running, refreshAll]);
+
+  React.useEffect(() => {
+    setDrawerTab("action");
+  }, [selected]);
 
   const traceByContract = useMemo(() => {
     const m = {};
@@ -1676,6 +1684,7 @@ export default function ContractRenewalPOC() {
               <StatBlock label="Payment lag" value={`${selectedContract.paymentLagDays}d`} />
             </div>
 
+            {/* Globally available regardless of which drawer tab is active */}
             <CachedAgentCard
               title="Customer Summary (AI Generated)"
               record={customerSummaries[selectedContract.customerId]}
@@ -1684,101 +1693,133 @@ export default function ContractRenewalPOC() {
               placeholderLabel="Synthesizes this customer's entire portfolio (all contracts) into one relationship summary. Generated automatically during the next batch run if you skip this."
             />
 
-            <RiskFactorBreakdown factors={selectedContract.riskFactors} />
+            <div style={{ display: "flex", gap: 18, borderBottom: `1px solid ${T.border}`, marginBottom: 16 }}>
+              <button className={`tabbtn ${drawerTab === "action" ? "active" : ""}`} onClick={() => setDrawerTab("action")}>Recommended Action</button>
+              <button className={`tabbtn ${drawerTab === "portfolio" ? "active" : ""}`} onClick={() => setDrawerTab("portfolio")}>Customer Portfolio</button>
+              <button className={`tabbtn ${drawerTab === "service" ? "active" : ""}`} onClick={() => setDrawerTab("service")}>Service History</button>
+              <button className={`tabbtn ${drawerTab === "evaluation" ? "active" : ""}`} onClick={() => setDrawerTab("evaluation")}>AI Evaluation</button>
+            </div>
 
-            <CachedAgentCard
-              title="Service Ticket Summary (AI Generated)"
-              record={ticketSummaries[selectedContract.contractId]}
-              onGenerate={() => runTicketSummary(selectedContract.contractId)}
-              loadingLabel="Reading service ticket history"
-              placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent. Generated automatically during the next batch run if you skip this."
-            />
-
-            <ServiceTicketHistory equipment={selectedContract.equipment} tickets={selectedContract.serviceTickets} />
-
-            <CustomerFeedbackPanel feedback={selectedContract.customerFeedback} trend={selectedContract.feedbackTrend} />
-
-            {!selectedTrace && (
-              <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>
-                No recommendation run yet for this contract's current milestone.
-              </div>
-            )}
-
-            {selectedTrace && selectedTrace.error && (
-              <Card style={{ padding: 14, marginBottom: 14, background: T.riskBg, borderColor: T.risk }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <AlertTriangle size={15} color={T.risk} />
-                  <span style={{ fontSize: 13, fontWeight: 700, color: T.risk }}>Run failed</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: T.ink }}>{selectedTrace.errorMessage}</div>
-                <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed — it will be retried on the next batch run.</div>
-              </Card>
-            )}
-
-            {selectedTrace && !selectedTrace.error && (
+            {drawerTab === "action" && (
               <>
-                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Recommendation (AI Generated)</div>
-                <Card style={{ padding: 14, marginBottom: 14, background: T.surfaceSunken }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{selectedTrace.recommendation?.campaign}</div>
-                  <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 8 }}>Owner: {selectedTrace.recommendation?.execution_owner}</div>
-                  <div style={{ fontSize: 13 }}>{selectedTrace.recommendation?.rationale}</div>
-                  {selectedTrace.recommendation?.upsell && selectedTrace.recommendation.upsell !== "Not recommended for this account right now" && (
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.border}`, fontSize: 12.5 }}>
-                      <b>Upsell:</b> {selectedTrace.recommendation.upsell}
+                {!selectedTrace && (
+                  <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>
+                    No recommendation run yet for this contract's current milestone.
+                  </div>
+                )}
+
+                {selectedTrace && selectedTrace.error && (
+                  <Card style={{ padding: 14, marginBottom: 14, background: T.riskBg, borderColor: T.risk }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <AlertTriangle size={15} color={T.risk} />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: T.risk }}>Run failed</span>
                     </div>
-                  )}
-                </Card>
+                    <div style={{ fontSize: 12.5, color: T.ink }}>{selectedTrace.errorMessage}</div>
+                    <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed — it will be retried on the next batch run.</div>
+                  </Card>
+                )}
 
-                <DraftContent content={selectedTrace.content} contentError={selectedTrace.contentError} customerName={selectedContract.customerName} />
+                {selectedTrace && !selectedTrace.error && (
+                  <>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Recommendation (AI Generated)</div>
+                    <Card style={{ padding: 14, marginBottom: 14, background: T.surfaceSunken }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{selectedTrace.recommendation?.campaign}</div>
+                      <div style={{ fontSize: 12.5, color: T.inkMuted, marginBottom: 8 }}>Owner: {selectedTrace.recommendation?.execution_owner}</div>
+                      <div style={{ fontSize: 13 }}>{selectedTrace.recommendation?.rationale}</div>
+                      {selectedTrace.recommendation?.upsell && selectedTrace.recommendation.upsell !== "Not recommended for this account right now" && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.border}`, fontSize: 12.5 }}>
+                          <b>Upsell:</b> {selectedTrace.recommendation.upsell}
+                        </div>
+                      )}
+                    </Card>
 
-                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>AI Result Evaluation</div>
-                <Card style={{ padding: 14, marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                    {selectedTrace.escalated
-                      ? <><AlertTriangle size={15} color={T.risk} /><span style={{ fontSize: 13, fontWeight: 600, color: T.risk }}>Escalated to human review</span></>
-                      : selectedTrace.pass
-                        ? <><CheckCircle2 size={15} color={T.safe} /><span style={{ fontSize: 13, fontWeight: 600, color: T.safe }}>Passed evaluation</span></>
-                        : <><AlertTriangle size={15} color={T.risk} /><span style={{ fontSize: 13, fontWeight: 600, color: T.risk }}>Failed evaluation</span></>}
+                    <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Log outcome</div>
+                    <Card style={{ padding: 14, marginBottom: 14 }}>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                        {["No response", "Engaged", "Declined"].map((o) => (
+                          <button
+                            key={o}
+                            onClick={() => setOutcome(selectedContract.contractId, o)}
+                            style={{
+                              flex: 1, padding: "8px 6px", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                              border: `1px solid ${selectedTrace.outcome === o ? T.ink : T.border}`,
+                              background: selectedTrace.outcome === o ? T.ink : "#fff",
+                              color: selectedTrace.outcome === o ? "#fff" : T.inkMuted,
+                            }}
+                          >{o}</button>
+                        ))}
+                      </div>
+                      <textarea
+                        placeholder="Optional rep note…"
+                        value={selectedTrace.outcomeNote}
+                        onChange={(e) => setOutcome(selectedContract.contractId, selectedTrace.outcome, e.target.value)}
+                        style={{ width: "100%", minHeight: 60, border: `1px solid ${T.border}`, borderRadius: 7, padding: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }}
+                      />
+                    </Card>
+                    <EscalationPanel record={selectedTrace} onToggleAction={toggleActionStatus} />
+
+                    <DraftContent content={selectedTrace.content} contentError={selectedTrace.contentError} customerName={selectedContract.customerName} />
+                  </>
+                )}
+              </>
+            )}
+
+            {drawerTab === "portfolio" && (
+              <>
+                <RiskFactorBreakdown factors={selectedContract.riskFactors} />
+                <CustomerFeedbackPanel feedback={selectedContract.customerFeedback} trend={selectedContract.feedbackTrend} />
+              </>
+            )}
+
+            {drawerTab === "service" && (
+              <>
+                <CachedAgentCard
+                  title="Service Ticket Summary (AI Generated)"
+                  record={ticketSummaries[selectedContract.contractId]}
+                  onGenerate={() => runTicketSummary(selectedContract.contractId)}
+                  loadingLabel="Reading service ticket history"
+                  placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent. Generated automatically during the next batch run if you skip this."
+                />
+                <ServiceTicketHistory equipment={selectedContract.equipment} tickets={selectedContract.serviceTickets} />
+              </>
+            )}
+
+            {drawerTab === "evaluation" && (
+              <>
+                {!selectedTrace && (
+                  <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>
+                    No evaluation available yet — run a recommendation first.
                   </div>
-                  {Object.entries(selectedTrace.evaluation?.scores || {}).map(([k, v]) => (
-                    <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "3px 0" }}>
-                      <span style={{ color: T.inkMuted, textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</span>
-                      <span style={{ fontWeight: 600 }}>{v}/10</span>
-                    </div>
-                  ))}
-                  <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11.5, color: T.inkFaint }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><RotateCcw size={12} /> {selectedTrace.retryCount} retries</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {selectedTrace.latencyMs}ms</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Coins size={12} /> ${selectedTrace.costUsd.toFixed(4)}</span>
-                  </div>
-                </Card>
+                )}
 
-                <EscalationPanel record={selectedTrace} onToggleAction={toggleActionStatus} />
+                {selectedTrace && !selectedTrace.error && (
+                  <>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>AI Result Evaluation</div>
+                    <Card style={{ padding: 14, marginBottom: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                        {selectedTrace.escalated
+                          ? <><AlertTriangle size={15} color={T.risk} /><span style={{ fontSize: 13, fontWeight: 600, color: T.risk }}>Escalated to human review</span></>
+                          : selectedTrace.pass
+                            ? <><CheckCircle2 size={15} color={T.safe} /><span style={{ fontSize: 13, fontWeight: 600, color: T.safe }}>Passed evaluation</span></>
+                            : <><AlertTriangle size={15} color={T.risk} /><span style={{ fontSize: 13, fontWeight: 600, color: T.risk }}>Failed evaluation</span></>}
+                      </div>
+                      {Object.entries(selectedTrace.evaluation?.scores || {}).map(([k, v]) => (
+                        <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "3px 0" }}>
+                          <span style={{ color: T.inkMuted, textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</span>
+                          <span style={{ fontWeight: 600 }}>{v}/10</span>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11.5, color: T.inkFaint }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><RotateCcw size={12} /> {selectedTrace.retryCount} retries</span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {selectedTrace.latencyMs}ms</span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Coins size={12} /> ${selectedTrace.costUsd.toFixed(4)}</span>
+                      </div>
+                    </Card>
 
-                <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Log outcome</div>
-                <Card style={{ padding: 14 }}>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                    {["No response", "Engaged", "Declined"].map((o) => (
-                      <button
-                        key={o}
-                        onClick={() => setOutcome(selectedContract.contractId, o)}
-                        style={{
-                          flex: 1, padding: "8px 6px", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                          border: `1px solid ${selectedTrace.outcome === o ? T.ink : T.border}`,
-                          background: selectedTrace.outcome === o ? T.ink : "#fff",
-                          color: selectedTrace.outcome === o ? "#fff" : T.inkMuted,
-                        }}
-                      >{o}</button>
-                    ))}
-                  </div>
-                  <textarea
-                    placeholder="Optional rep note…"
-                    value={selectedTrace.outcomeNote}
-                    onChange={(e) => setOutcome(selectedContract.contractId, selectedTrace.outcome, e.target.value)}
-                    style={{ width: "100%", minHeight: 60, border: `1px solid ${T.border}`, borderRadius: 7, padding: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }}
-                  />
-                </Card>
-                <AgentInspector attempts={selectedTrace.attempts} />
+                  </>
+                )}
+
+                <AgentInspector attempts={selectedTrace?.attempts} />
               </>
             )}
           </div>
