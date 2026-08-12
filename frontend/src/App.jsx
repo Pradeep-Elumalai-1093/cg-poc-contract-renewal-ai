@@ -1121,10 +1121,10 @@ export default function ContractRenewalPOC() {
         {/* Quadrant tints — reuse each segment's existing badge
             background color, so this stays in sync with SEGMENT_BG
             instead of being a second, hand-maintained color list. */}
-        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" />
-        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["High Risk"]} fillOpacity={1} stroke="none" />
-        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={0} y2={medianContractValue} fill={SEGMENT_BG["At Risk"]} fillOpacity={1} stroke="none" />
-        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={0} y2={medianContractValue} fill={SEGMENT_BG["Standard"]} fillOpacity={1} stroke="none" />
+        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" label={{ value: "Q4: Low risk, High value", position: "insideTopLeft", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
+        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["High Risk"]} fillOpacity={1} stroke="none" label={{ value: "Q1: High risk, High value", position: "insideTopRight", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
+        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={0} y2={medianContractValue} fill={SEGMENT_BG["At Risk"]} fillOpacity={1} stroke="none" label={{ value: "Q2: High risk, Low value", position: "insideBottomRight", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
+        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={0} y2={medianContractValue} fill={SEGMENT_BG["Standard"]} fillOpacity={1} stroke="none" label={{ value: "Q3: Low risk, Low value", position: "insideBottomLeft", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
         <XAxis type="number" dataKey="x" name="Risk score" domain={[0, 100]} stroke={T.inkFaint} tick={{ fontSize: 11 }} />
         <YAxis type="number" dataKey="y" name="Contract value ($)" domain={[0, scatterYMax]} stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
         <ZAxis range={[55, 55]} />
