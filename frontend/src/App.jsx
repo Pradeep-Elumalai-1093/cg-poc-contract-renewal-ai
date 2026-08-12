@@ -610,6 +610,139 @@ function aggregateCampaigns(traceList) {
 }
 
 
+// Ported from architecture_diagrams.html's <section id="flow">, including its
+// drag-to-rearrange behavior (originally a page-global <script> operating on
+// document.querySelectorAll) — scoped to this component's own ref here so it
+// can't interfere with (or be interfered with by) anything else on the page,
+// and cleaned up on unmount instead of being a bare global side effect.
+function ApplicationFlowDiagram() {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root) return;
+
+    const getOffset = (el) => {
+      const parts = (el.getAttribute("data-tx") || "0,0").split(",").map(Number);
+      return { x: parts[0] || 0, y: parts[1] || 0 };
+    };
+    const updateConnectors = (nodeId) => {
+      root.querySelectorAll(`line[data-from="${nodeId}"], line[data-to="${nodeId}"]`).forEach((line) => {
+        const fromNode = root.querySelector(`#${line.getAttribute("data-from")}`);
+        const toNode = root.querySelector(`#${line.getAttribute("data-to")}`);
+        if (!fromNode || !toNode) return;
+        const fo = getOffset(fromNode), to = getOffset(toNode);
+        const fa = line.getAttribute("data-from-anchor").split(",").map(Number);
+        const ta = line.getAttribute("data-to-anchor").split(",").map(Number);
+        line.setAttribute("x1", fa[0] + fo.x);
+        line.setAttribute("y1", fa[1] + fo.y);
+        line.setAttribute("x2", ta[0] + to.x);
+        line.setAttribute("y2", ta[1] + to.y);
+      });
+    };
+
+    const teardowns = [];
+    root.querySelectorAll(".draggable-node").forEach((node) => {
+      let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+      const onPointerDown = (e) => {
+        dragging = true;
+        node.setPointerCapture(e.pointerId);
+        startX = e.clientX; startY = e.clientY;
+        const o = getOffset(node);
+        origX = o.x; origY = o.y;
+        node.parentNode.appendChild(node); // bring to front while dragging
+        e.preventDefault();
+      };
+      const onPointerMove = (e) => {
+        if (!dragging) return;
+        const svg = node.closest("svg");
+        const rect = svg.getBoundingClientRect();
+        const vb = svg.viewBox.baseVal;
+        const scaleX = vb.width / rect.width;
+        const scaleY = vb.height / rect.height;
+        const nx = origX + (e.clientX - startX) * scaleX;
+        const ny = origY + (e.clientY - startY) * scaleY;
+        node.setAttribute("transform", `translate(${nx},${ny})`);
+        node.setAttribute("data-tx", `${nx},${ny}`);
+        updateConnectors(node.id);
+      };
+      const stop = () => { dragging = false; };
+      node.addEventListener("pointerdown", onPointerDown);
+      node.addEventListener("pointermove", onPointerMove);
+      node.addEventListener("pointerup", stop);
+      node.addEventListener("pointercancel", stop);
+      teardowns.push(() => {
+        node.removeEventListener("pointerdown", onPointerDown);
+        node.removeEventListener("pointermove", onPointerMove);
+        node.removeEventListener("pointerup", stop);
+        node.removeEventListener("pointercancel", stop);
+      });
+    });
+
+    return () => teardowns.forEach((fn) => fn());
+  }, []);
+
+  return (
+    <Card style={{ padding: "22px 26px", marginBottom: 18, borderTop: `3px solid ${T.brand}` }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>How it runs</div>
+      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 4px" }}>Application flow — daily batch run</h3>
+      <p style={{ fontSize: 12.5, color: T.inkMuted, margin: "0 0 10px", maxWidth: 700 }}>
+        What happens end to end when the daily batch is triggered.
+      </p>
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: T.brand,
+        background: T.brandBg || T.infoBg, borderRadius: 20, padding: "4px 10px", marginBottom: 14,
+      }}>
+        ↕ Drag any box to rearrange
+      </div>
+      <div ref={containerRef} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: 20 }}>
+        <svg viewBox="0 0 680 220" role="img" style={{ display: "block", width: "100%", height: "auto" }}>
+          <title>Application flow for the daily batch run</title>
+          <desc>Daily batch trigger runs the agent graph for each due contract-milestone, which logs a trace and draft content, a rep reviews and takes action, then logs the outcome, which feeds the next milestone.</desc>
+          <defs>
+            <marker id="afArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#5B6472" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></marker>
+            <marker id="afArrowRed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#C1502E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></marker>
+          </defs>
+
+          <line id="af-l1" data-from="af-trigger" data-to="af-graph" data-from-anchor="140,58" data-to-anchor="168,58" x1="140" y1="58" x2="168" y2="58" stroke="#5B6472" strokeWidth="1.5" markerEnd="url(#afArrow)" />
+          <line id="af-l2" data-from="af-graph" data-to="af-trace" data-from-anchor="320,58" data-to-anchor="348,58" x1="320" y1="58" x2="348" y2="58" stroke="#5B6472" strokeWidth="1.5" markerEnd="url(#afArrow)" />
+          <line id="af-l3" data-from="af-trace" data-to="af-rep" data-from-anchor="490,58" data-to-anchor="518,58" x1="490" y1="58" x2="518" y2="58" stroke="#5B6472" strokeWidth="1.5" markerEnd="url(#afArrow)" />
+          <line id="af-l4" data-from="af-rep" data-to="af-outcome" data-from-anchor="590,86" data-to-anchor="590,124" x1="590" y1="86" x2="590" y2="124" stroke="#5B6472" strokeWidth="1.5" markerEnd="url(#afArrow)" />
+          <path id="af-l5" d="M500 154 L245 154 L245 88" fill="none" stroke="#D85A30" strokeWidth="1.5" markerEnd="url(#afArrowRed)" />
+
+          <g className="draggable-node" id="af-trigger" data-tx="0,0" transform="translate(0,0)" style={{ cursor: "grab" }}>
+            <rect x="20" y="30" width="120" height="56" rx="8" fill="#F1EFE8" stroke="#B4B2A9" />
+            <text x="80" y="50" textAnchor="middle" dominantBaseline="central" fontSize="12" fontWeight="600" fill="#2C2C2A">Daily batch</text>
+            <text x="80" y="68" textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#5F5E5A">Due contracts only</text>
+          </g>
+          <g className="draggable-node" id="af-graph" data-tx="0,0" transform="translate(0,0)" style={{ cursor: "grab" }}>
+            <rect x="170" y="30" width="150" height="56" rx="8" fill="#EEEDFE" stroke="#7F77DD" />
+            <text x="245" y="50" textAnchor="middle" dominantBaseline="central" fontSize="12" fontWeight="600" fill="#26215C">Agent graph</text>
+            <text x="245" y="68" textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#3C3489">Recommend → evaluate → draft</text>
+          </g>
+          <g className="draggable-node" id="af-trace" data-tx="0,0" transform="translate(0,0)" style={{ cursor: "grab" }}>
+            <rect x="350" y="30" width="140" height="56" rx="8" fill="#E1F5EE" stroke="#5DCAA5" />
+            <text x="420" y="50" textAnchor="middle" dominantBaseline="central" fontSize="12" fontWeight="600" fill="#04342C">Trace + draft</text>
+            <text x="420" y="68" textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#085041">Logged for review</text>
+          </g>
+          <g className="draggable-node" id="af-rep" data-tx="0,0" transform="translate(0,0)" style={{ cursor: "grab" }}>
+            <rect x="520" y="30" width="140" height="56" rx="8" fill="#E1F5EE" stroke="#5DCAA5" />
+            <text x="590" y="50" textAnchor="middle" dominantBaseline="central" fontSize="12" fontWeight="600" fill="#04342C">Rep reviews</text>
+            <text x="590" y="68" textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#085041">Sends draft or escalates</text>
+          </g>
+          <g className="draggable-node" id="af-outcome" data-tx="0,0" transform="translate(0,0)" style={{ cursor: "grab" }}>
+            <rect x="500" y="126" width="160" height="56" rx="8" fill="#FAECE7" stroke="#F0997B" />
+            <text x="580" y="146" textAnchor="middle" dominantBaseline="central" fontSize="12" fontWeight="600" fill="#4A1B0C">Outcome logged</text>
+            <text x="580" y="164" textAnchor="middle" dominantBaseline="central" fontSize="10" fill="#712B13">Feeds next milestone</text>
+          </g>
+        </svg>
+      </div>
+      <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 8 }}>Drag any box above to rearrange for a presentation.</div>
+    </Card>
+  );
+}
+
+
 function OutcomeBucketChart({ data }) {
   const max = Math.max(...data.engaged, ...data.notEngaged, 1);
   return (
@@ -1270,7 +1403,8 @@ export default function ContractRenewalPOC() {
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: "2px 0 0" }}>Proactive Contract Renewal</h1>
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
+
+        {/* <div style={{ textAlign: "right" }}>
           <button
             onClick={runBatch}
             disabled={running || dueContracts.length === 0}
@@ -1284,16 +1418,17 @@ export default function ContractRenewalPOC() {
             {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
-        </div>
+        </div> */}
+          
       </div>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 20, borderBottom: `1px solid ${T.border}`, marginBottom: 18 }}>
         <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
-        <button className={`tabbtn ${tab === "technical-details" ? "active" : ""}`} onClick={() => setTab("technical-details")}>Technical Details</button>
         <button className={`tabbtn ${tab === "renewal-prioritization" ? "active" : ""}`} onClick={() => setTab("renewal-prioritization")}>Renewal Prioritization</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
-        <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button>
+        <button className={`tabbtn ${tab === "technical-details" ? "active" : ""}`} onClick={() => setTab("technical-details")}>Technical Details</button>
+        {/* <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button> */}
       </div>
 
       {tab === "overview" && (
@@ -1341,7 +1476,10 @@ export default function ContractRenewalPOC() {
               For how this is actually built &mdash; the agent pipeline, the scoring model, current state, and the
               assumptions behind it &mdash; see the Technical Details tab.
             </div>
+            
           </Card>
+
+          <ApplicationFlowDiagram />
 
         </div>
       )}
