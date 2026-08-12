@@ -39,7 +39,7 @@ Technical details: (10-15 seconds)
     Visual represenation of contract
 
 
-+ Table - Column sort
++ ~~Table - Column sort~~
 + Search
-+ Section wise Minimize & maximize
++ ~~Section wise Minimize & maximize~~
 + 
