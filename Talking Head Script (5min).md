@@ -5,11 +5,11 @@
 
 **[0:00–0:35] — To camera**
 
-Every year, Carrier's Climate Solutions business renews thousands of HVAC service contracts across North America, Europe, and Asia-Pacific. Every day, in the background, the system scans that entire book and automatically generates fresh renewal recommendations for the accounts that need them. ~~That part runs on its own — what I want to show you is where those recommendations actually land, and what a rep does with them.~~
+Every year, Carrier's Climate Solutions business renews thousands of HVAC service contracts across North America, Europe, and Asia-Pacific. Every day, in the background, the system scans that entire book and automatically generates fresh renewal recommendations for the accounts that need them.
 
 **[0:35–1:17] — Screen: Renewal Prioritization tab**
 
-This is the Renewal Prioritization screen — an account manager's home base. Contracts are bucketed by days to expiry, and filterable by region and channel. And this chart right here is the heart of it: every contract, plotted by risk score against contract value. The ones up here, in the top right — high risk *and* high value — those are the accounts that matter most. And if you need a closer look, the whole chart is zoomable — you can pop it open full-screen and dig into a cluster.
+This is the Renewal Prioritization screen — an account manager's home base. Contracts are bucketed by days to expiry, and filterable by region and channel. And this chart right here is the heart of it: every contract, plotted by risk score against contract value. The ones up here, in the top right — high risk *and* high value — those are the accounts that matter most. But down here — low risk, high value — that's your low-hanging fruit: stable, valuable accounts you can lean into for an upsell or a loyalty renewal without much risk at all. And if you need a closer look, the whole chart is zoomable — you can pop it open full-screen and dig into a cluster.
 
 **[1:17–2:02] — Screen: filters, scatter chart, KPI cards, campaign response chart**
 
@@ -29,7 +29,7 @@ Click on a customer or a contract, and a panel opens with the recommendation rig
 
 **[3:23–3:36] — Screen: Send email**
 
-~~When you're happy with it,~~ hitting send opens Outlook with the email already drafted — subject, body, everything. No copying, no pasting — the rep just reviews it and sends.
+hitting send opens Outlook with the email already drafted — subject, body, everything. No copying, no pasting — the rep just reviews it and sends.
 
 **[3:36–4:05] — Screen: Log outcome**
 
@@ -37,15 +37,15 @@ Once the rep reaches out, they log what happened — engaged, declined, or no re
 
 **[4:05–4:38] — Screen: Dashboard tab, campaign performance**
 
-Zoom out to the Dashboard, and you get the same picture rolled up globally and by region — North America, Europe, Asia-Pacific. There's a full campaign performance view too: for each type of campaign, you can see how many accounts were assigned, engaged, declined, or gave no response, and what that means in real dollars — total contract value, revenue at risk, and what's actually been converted.
+Navigating to Dashboard, and you get the same picture rolled up globally and by region — North America, Europe, Asia-Pacific. There's a full campaign performance view too: for each type of campaign, you can see how many accounts were assigned, engaged, declined, or gave no response, and what that means in real dollars — total contract value, revenue at risk, and what's actually been converted.
 
-**[4:38–4:50] — Screen: Trace & Agent Metrics**
+**[4:38–4:59] — Screen: campaign performance breakdown table**
 
-And for anyone who wants to audit the AI itself, every recommendation is fully traceable — the prompts, the scores, the retries, right down to the cost.
+And it goes deeper than just the region rollup — you can drill into each individual campaign type: personal outreach calls, loyalty pricing offers, service check-ins, contract restructuring, escalations. The table breaks out assigned, engaged, declined, and no-response for every single one, in real dollars, so you can see exactly which play is actually converting.
 
-**[4:50–4:58] — To camera**
+**[4:59–5:07] — To camera**
 
 One engine, three regions. From spotting the risk, to recommending the action, to proving what actually worked.
 
 ---
-*Word count: ~670 | Pace: ~135 wpm (natural spoken pace with pauses)*
+*Word count: ~700 | Pace: ~135 wpm (natural spoken pace with pauses)*
