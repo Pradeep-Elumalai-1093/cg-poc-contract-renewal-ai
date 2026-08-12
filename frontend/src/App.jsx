@@ -1196,7 +1196,8 @@ export default function ContractRenewalPOC() {
   }, [filteredContracts]);
 
   // Search narrows the worklist further, on top of the region/channel/bucket
-  // filters — matches customer name, contract ID, region, or channel.
+  // filters — matches customer name, contract ID, region, channel, or the
+  // recommended campaign type.
   const searchedWorklist = useMemo(() => {
     const q = worklistSearch.trim().toLowerCase();
     if (!q) return worklist;
@@ -1204,9 +1205,10 @@ export default function ContractRenewalPOC() {
       c.customerName.toLowerCase().includes(q) ||
       c.contractId.toLowerCase().includes(q) ||
       c.region.toLowerCase().includes(q) ||
-      c.channel.toLowerCase().includes(q)
+      c.channel.toLowerCase().includes(q) ||
+      (traceByContract[c.contractId]?.recommendation?.campaign || "").toLowerCase().includes(q)
     );
-  }, [worklist, worklistSearch]);
+  }, [worklist, worklistSearch, traceByContract]);
 
   const worklistSort = useSort("riskScore", "desc");
   const [worklistSortKey, worklistSortDir] = worklistSort;
@@ -1217,6 +1219,7 @@ export default function ContractRenewalPOC() {
     bucket: (c) => BUCKETS.indexOf(c.bucket),
     riskScore: (c) => c.riskScore,
     contractValue: (c) => c.contractValue,
+    recommendation: (c) => traceByContract[c.contractId]?.recommendation?.campaign || "",
     status: (c) => {
       const t = traceByContract[c.contractId];
       if (!t) return 0;
@@ -1677,12 +1680,13 @@ export default function ContractRenewalPOC() {
                   <SortTh label="Bucket" sortKey="bucket" sort={worklistSort} />
                   <SortTh label="Risk" sortKey="riskScore" sort={worklistSort} />
                   <SortTh label="Value" sortKey="contractValue" sort={worklistSort} />
+                  <SortTh label="Recommendation" sortKey="recommendation" sort={worklistSort} />
                   <SortTh label="Status" sortKey="status" sort={worklistSort} />
                   <th></th>
                 </tr></thead>
                 <tbody>
                   {sortedWorklist.length === 0 && (
-                    <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.inkFaint, fontSize: 12.5 }}>No contracts match "{worklistSearch}".</td></tr>
+                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 24, color: T.inkFaint, fontSize: 12.5 }}>No contracts match "{worklistSearch}".</td></tr>
                   )}
                   {sortedWorklist.map((c) => {
                     const t = traceByContract[c.contractId];
@@ -1694,6 +1698,9 @@ export default function ContractRenewalPOC() {
                         <td><Badge text={BUCKET_LABEL[c.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
                         <td><Badge text={`${c.segment} · ${c.riskScore}`} color={SEGMENT_COLOR[c.segment]} bg={SEGMENT_BG[c.segment]} /></td>
                         <td>${c.contractValue.toLocaleString()}</td>
+                        <td style={{ color: t?.recommendation?.campaign ? T.ink : T.inkFaint }}>
+                          <Badge text={t?.recommendation?.campaign || "—"} bg={T.purpleBg} />
+                        </td>
                         <td>
                           {!t && <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>}
                           {t && t.error && <span title={t.errorMessage}><Badge text="Error" color={T.risk} bg={T.riskBg} /></span>}

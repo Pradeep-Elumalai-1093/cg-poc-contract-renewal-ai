@@ -299,7 +299,7 @@ async def run_agent_graph(
             vals = [float(scores.get(k, 0) or 0) for k in EVAL_CRITERIA]
             composite = sum(vals) / len(vals)
             policy_ok = float(scores.get("policy_compliance", 0) or 0) >= POLICY_FLOOR
-            passed = policy_ok and composite >= COMPOSITE_PASS
+            passed = policy_ok and composite >= z
             evaluation["composite"] = round(composite, 1)
             evaluation["pass"] = passed
 
