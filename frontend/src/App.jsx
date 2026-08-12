@@ -3,7 +3,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
   BarChart, Bar, Legend, LabelList
 } from "recharts";
-import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send, Maximize2, Minimize2 } from "lucide-react";
+import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send, Maximize2, Minimize2, Search } from "lucide-react";
 import { api } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -702,6 +702,7 @@ export default function ContractRenewalPOC() {
   const [bucketFilter, setBucketFilter] = useState(null);
   const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
+  const [worklistSearch, setWorklistSearch] = useState("");
   // Dashboard tab's own Global -> Regional -> Segment -> Milestone drill-down.
   // Kept separate from the Renewal Prioritization filters above — the two tabs
   // answer different questions, so filtering one shouldn't silently filter
@@ -1061,9 +1062,22 @@ export default function ContractRenewalPOC() {
     return [...filteredContracts].sort((a, b) => b.riskScore - a.riskScore);
   }, [filteredContracts]);
 
+  // Search narrows the worklist further, on top of the region/channel/bucket
+  // filters — matches customer name, contract ID, region, or channel.
+  const searchedWorklist = useMemo(() => {
+    const q = worklistSearch.trim().toLowerCase();
+    if (!q) return worklist;
+    return worklist.filter((c) =>
+      c.customerName.toLowerCase().includes(q) ||
+      c.contractId.toLowerCase().includes(q) ||
+      c.region.toLowerCase().includes(q) ||
+      c.channel.toLowerCase().includes(q)
+    );
+  }, [worklist, worklistSearch]);
+
   const worklistSort = useSort("riskScore", "desc");
   const [worklistSortKey, worklistSortDir] = worklistSort;
-  const sortedWorklist = useMemo(() => sortRows(worklist, worklistSortKey, worklistSortDir, {
+  const sortedWorklist = useMemo(() => sortRows(searchedWorklist, worklistSortKey, worklistSortDir, {
     customerName: (c) => c.customerName,
     region: (c) => c.region,
     channel: (c) => c.channel,
@@ -1077,7 +1091,7 @@ export default function ContractRenewalPOC() {
       if (t.escalated) return t.actionStatus === "Action required" ? 2 : 3;
       return t.pass ? 4 : 1;
     },
-  }), [worklist, worklistSortKey, worklistSortDir, traceByContract]);
+  }), [searchedWorklist, worklistSortKey, worklistSortDir, traceByContract]);
 
   const traceSort = useSort(null, "asc");
   const [traceSortKey, traceSortDir] = traceSort;
@@ -1489,9 +1503,32 @@ export default function ContractRenewalPOC() {
 
           {/* Worklist */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `— ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
-              {bucketFilter && <button onClick={() => setBucketFilter(null)} style={{ border: "none", background: "none", fontSize: 12, color: T.info, cursor: "pointer" }}>Clear filter</button>}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ position: "relative" }}>
+                  <Search size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: T.inkFaint }} />
+                  <input
+                    type="text"
+                    value={worklistSearch}
+                    onChange={(e) => setWorklistSearch(e.target.value)}
+                    placeholder="Search customer, contract ID, region…"
+                    style={{
+                      border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 10px 6px 28px",
+                      fontSize: 12.5, fontFamily: "inherit", width: 220, color: T.ink,
+                    }}
+                  />
+                  {worklistSearch && (
+                    <button
+                      onClick={() => setWorklistSearch("")}
+                      style={{ position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", padding: 2, color: T.inkFaint, display: "flex" }}
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+                {bucketFilter && <button onClick={() => setBucketFilter(null)} style={{ border: "none", background: "none", fontSize: 12, color: T.info, cursor: "pointer", whiteSpace: "nowrap" }}>Clear filter</button>}
+              </div>
             </div>
             <div style={{ maxHeight: 360, overflowY: "auto" }}>
               <table>
@@ -1506,6 +1543,9 @@ export default function ContractRenewalPOC() {
                   <th></th>
                 </tr></thead>
                 <tbody>
+                  {sortedWorklist.length === 0 && (
+                    <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.inkFaint, fontSize: 12.5 }}>No contracts match "{worklistSearch}".</td></tr>
+                  )}
                   {sortedWorklist.map((c) => {
                     const t = traceByContract[c.contractId];
                     return (

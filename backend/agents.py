@@ -15,11 +15,11 @@ from state import CAMPAIGN_TAXONOMY
 from rules import PRODUCT_CATALOG
 from llm_client import call_llm, LLMError, remove_think
 
-MAX_RETRIES = 0
 COMPOSITE_PASS = 7
+MAX_RETRIES = 2
 POLICY_FLOOR = 6
-COST_PER_M_INPUT = 3.0
-COST_PER_M_OUTPUT = 15.0
+COST_PER_M_INPUT = 0.05
+COST_PER_M_OUTPUT = 0.15
 
 EVAL_CRITERIA = ["groundedness", "policy_compliance", "actionability", "non_repetition", "tone", "upsell_relevance"]
 

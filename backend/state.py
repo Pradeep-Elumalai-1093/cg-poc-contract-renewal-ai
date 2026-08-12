@@ -142,7 +142,7 @@ def generate_contracts() -> list[dict]:
     seq = 1
     cust_seq = 1
     name_idx = 0
-    region_counts = {"NATT": 10, "ETT": 10, "APAC_TT": 8}  # customer counts per region
+    region_counts = {"NATT":35, "ETT": 30, "APAC_TT": 30}  # customer counts per region
     eq_types = list(PRODUCT_CATALOG.keys())
 
     for region_id, customer_count in region_counts.items():
