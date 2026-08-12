@@ -3,7 +3,7 @@ import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
   BarChart, Bar, Legend, LabelList
 } from "recharts";
-import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send } from "lucide-react";
+import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send, Maximize2, Minimize2 } from "lucide-react";
 import { api } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -189,6 +189,54 @@ function StatBlock({ label, value, sub, accent }) {
       <div style={{ fontSize: 26, fontWeight: 700, color: accent || T.ink, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>{value}</div>
       {sub && <div style={{ fontSize: 12, color: T.inkMuted, marginTop: 2 }}>{sub}</div>}
     </div>
+  );
+}
+
+// Table sorting — one hook + one comparator + one header cell, reused by
+// every sortable table instead of bespoke sort state/logic per table.
+function useSort(defaultKey = null, defaultDir = "asc") {
+  const [sortKey, setSortKey] = useState(defaultKey);
+  const [sortDir, setSortDir] = useState(defaultDir);
+  const toggleSort = (key) => {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+  return [sortKey, sortDir, toggleSort];
+}
+
+// accessors: { [sortKey]: (row) => comparable value }. Returns rows
+// unchanged if sortKey is null/unrecognized, so a table's existing default
+// order (whatever was passed in) is the fallback until a header is clicked.
+function sortRows(rows, sortKey, sortDir, accessors) {
+  const getValue = sortKey && accessors[sortKey];
+  if (!getValue) return rows;
+  const sorted = [...rows].sort((a, b) => {
+    const va = getValue(a), vb = getValue(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "string") return va.localeCompare(vb);
+    return va - vb;
+  });
+  return sortDir === "desc" ? sorted.reverse() : sorted;
+}
+
+// sort: the [sortKey, sortDir, toggleSort] tuple from useSort(). sortKey
+// prop here is which column this header controls, not the current sort state.
+function SortTh({ label, sortKey, sort, style }) {
+  const [activeKey, dir, toggleSort] = sort;
+  const active = activeKey === sortKey;
+  return (
+    <th onClick={() => toggleSort(sortKey)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", ...style }}>
+      {label}
+      <ChevronDown
+        size={11}
+        style={{
+          marginLeft: 3, verticalAlign: "middle", opacity: active ? 0.9 : 0.25,
+          transform: active && dir === "asc" ? "rotate(180deg)" : "none",
+        }}
+      />
+    </th>
   );
 }
 
@@ -663,6 +711,8 @@ export default function ContractRenewalPOC() {
   const [dashSegmentFilter, setDashSegmentFilter] = useState([]);
   const [dashBucketFilter, setDashBucketFilter] = useState(null);
   const [selected, setSelected] = useState(null);
+  // Which chart, if any, is currently blown up into the full-screen modal.
+  const [maximizedChart, setMaximizedChart] = useState(null); // "scatter" | "campaign-bar" | null
   // Which tab is active inside the contract detail drawer — reset to the
   // default whenever a different contract is opened, so switching contracts
   // doesn't leave you stranded on a tab that made sense for the last one.
@@ -910,6 +960,76 @@ export default function ContractRenewalPOC() {
     });
   }, [dashFilteredTrace]);
 
+  // Shared by the inline card and the maximize modal — same chart, just a
+  // different height, so the two views can't drift apart.
+  const renderCampaignBarChart = (height) => (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={dashCampaignData} margin={{ top: 24, right: 12, bottom: 40, left: 0 }}>
+        <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
+        <XAxis dataKey="name" stroke={T.inkFaint} tick={{ fontSize: 10.5 }} interval={0} angle={-20} textAnchor="end" height={60} />
+        <YAxis stroke={T.inkFaint} tick={{ fontSize: 11 }} allowDecimals={false} />
+        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }} />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
+        <Bar dataKey="Assigned" fill={T.borderStrong} radius={[4, 4, 0, 0]}>
+          <LabelList
+            dataKey="Assigned"
+            content={({ x, y, width, index }) => {
+              const row = dashCampaignData[index];
+              if (!row) return null;
+              return (
+                <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                  {row.Assigned}
+                </text>
+              );
+            }}
+          />
+          </Bar>
+        <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]}>
+          <LabelList
+            dataKey="Engaged"
+            content={({ x, y, width, index }) => {
+              const row = dashCampaignData[index];
+              if (!row || !row.Engaged) return null;
+              return (
+                <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                  {row.Engaged} ({row.engagedRate}%)
+                </text>
+              );
+            }}
+          />
+          </Bar>
+        <Bar dataKey="Declined" fill={T.risk} radius={[4, 4, 0, 0]}>
+          <LabelList
+            dataKey="Declined"
+            content={({ x, y, width, index }) => {
+              const row = dashCampaignData[index];
+              if (!row || !row.Declined) return null;
+              return (
+                <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                  {row.Declined} ({row.declinedRate}%)
+                </text>
+              );
+            }}
+          />
+          </Bar>
+        <Bar dataKey="No response" fill={T.amber} radius={[4, 4, 0, 0]}>
+          <LabelList
+            dataKey="No response"
+            content={({ x, y, width, index }) => {
+              const row = dashCampaignData[index];
+              if (!row || !row.noResponse) return null;
+              return (
+                <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
+                  {row.noResponse} ({row.noResponseRate}%)
+                </text>
+              );
+            }}
+          />
+          </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+
   // Totals across every campaign, for the summary stat row above the chart —
   // sums dashCampaignData rather than re-deriving from dashFilteredTrace, so
   // there's one pass over the trace data, not two.
@@ -923,9 +1043,53 @@ export default function ContractRenewalPOC() {
     }, { assigned: 0, engaged: 0, declined: 0, noResponse: 0 });
   }, [dashCampaignData]);
 
+  const campaignSort = useSort(null, "asc");
+  const [campaignSortKey, campaignSortDir] = campaignSort;
+  const sortedCampaignData = useMemo(() => sortRows(dashCampaignData, campaignSortKey, campaignSortDir, {
+    name: (r) => r.name,
+    Assigned: (r) => r.Assigned,
+    Engaged: (r) => r.Engaged,
+    declined: (r) => r.declined,
+    noResponse: (r) => r.noResponse,
+    assignedValue: (r) => r.assignedValue,
+    potentialAtRiskValue: (r) => r.potentialAtRiskValue,
+    lostRevenueValue: (r) => r.lostRevenueValue,
+    potentialRevenueValue: (r) => r.potentialRevenueValue,
+  }), [dashCampaignData, campaignSortKey, campaignSortDir]);
+
   const worklist = useMemo(() => {
     return [...filteredContracts].sort((a, b) => b.riskScore - a.riskScore);
   }, [filteredContracts]);
+
+  const worklistSort = useSort("riskScore", "desc");
+  const [worklistSortKey, worklistSortDir] = worklistSort;
+  const sortedWorklist = useMemo(() => sortRows(worklist, worklistSortKey, worklistSortDir, {
+    customerName: (c) => c.customerName,
+    region: (c) => c.region,
+    channel: (c) => c.channel,
+    bucket: (c) => BUCKETS.indexOf(c.bucket),
+    riskScore: (c) => c.riskScore,
+    contractValue: (c) => c.contractValue,
+    status: (c) => {
+      const t = traceByContract[c.contractId];
+      if (!t) return 0;
+      if (t.error) return 1;
+      if (t.escalated) return t.actionStatus === "Action required" ? 2 : 3;
+      return t.pass ? 4 : 1;
+    },
+  }), [worklist, worklistSortKey, worklistSortDir, traceByContract]);
+
+  const traceSort = useSort(null, "asc");
+  const [traceSortKey, traceSortDir] = traceSort;
+  const sortedTraceRows = useMemo(() => sortRows([...trace].reverse(), traceSortKey, traceSortDir, {
+    customer: (r) => contracts.find((c) => c.contractId === r.contractId)?.customerName || "",
+    milestone: (r) => BUCKETS.indexOf(r.milestone),
+    campaign: (r) => r.recommendation?.campaign || "",
+    retryCount: (r) => r.retryCount,
+    result: (r) => (r.error ? 0 : r.escalated ? 1 : r.pass ? 3 : 2),
+    latencyMs: (r) => r.latencyMs,
+    costUsd: (r) => r.costUsd,
+  }), [trace, traceSortKey, traceSortDir, contracts]);
 
   const scatterData = useMemo(() => filteredContracts.map((c) => ({
     x: c.riskScore, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
@@ -948,6 +1112,54 @@ export default function ContractRenewalPOC() {
     return Math.ceil((maxVal * 1.1) / 5000) * 5000;
   }, [scatterData]);
 
+  // Shared by the inline card and the maximize modal — one definition of the
+  // chart, just rendered at a different height, so the two views can't drift.
+  const renderScatterChart = (height) => (
+    <ResponsiveContainer width="100%" height={height}>
+      <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
+        <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
+        {/* Quadrant tints — reuse each segment's existing badge
+            background color, so this stays in sync with SEGMENT_BG
+            instead of being a second, hand-maintained color list. */}
+        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" />
+        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["High Risk"]} fillOpacity={1} stroke="none" />
+        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={0} y2={medianContractValue} fill={SEGMENT_BG["At Risk"]} fillOpacity={1} stroke="none" />
+        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={0} y2={medianContractValue} fill={SEGMENT_BG["Standard"]} fillOpacity={1} stroke="none" />
+        <XAxis type="number" dataKey="x" name="Risk score" domain={[0, 100]} stroke={T.inkFaint} tick={{ fontSize: 11 }} />
+        <YAxis type="number" dataKey="y" name="Contract value ($)" domain={[0, scatterYMax]} stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+        <ZAxis range={[55, 55]} />
+        <ReferenceLine x={RISK_QUADRANT_THRESHOLD} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Risk " + RISK_QUADRANT_THRESHOLD, position: "insideTopLeft", fill: T.inkFaint, fontSize: 10 }} />
+        <ReferenceLine y={medianContractValue} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Median value ($)", position: "insideBottomRight", fill: T.inkFaint, fontSize: 10 }} />
+        <Tooltip
+          cursor={{ strokeDasharray: "3 3" }}
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            const d = payload[0].payload; // the original scatterData point: { x, y, tier, id, name }
+            return (
+              <div style={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, padding: "8px 10px" }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
+                <div style={{ color: T.inkMuted }}>{d.id}</div>
+                <div style={{ marginTop: 4 }}>Risk score: {d.x}</div>
+                <div style={{ marginTop: 4 }}>Tier: {d.tier}</div>
+                <div>Contract value ($): ${d.y.toLocaleString()}</div>
+              </div>
+            );
+          }}
+        />
+        {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
+          <Scatter
+            key={seg}
+            name={seg}
+            data={scatterData.filter((d) => d.tier === seg)}
+            fill={SEGMENT_COLOR[seg]}
+            onClick={(d) => { setSelected(d.id); setMaximizedChart(null); }}
+            cursor="pointer"
+          />
+        ))}
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+
   // Same helper the Dashboard tab uses for Total value / At risk $ / Converted
   // $ — one definition of these metrics, not a second copy for this tab.
   const plannerBookMetrics = useMemo(
@@ -968,6 +1180,15 @@ export default function ContractRenewalPOC() {
   const portfolioContracts = selectedContract
     ? contracts.filter((c) => c.customerId === selectedContract.customerId).sort((a, b) => b.riskScore - a.riskScore)
     : [];
+  const portfolioSort = useSort(null, "asc");
+  const [portfolioSortKey, portfolioSortDir] = portfolioSort;
+  const sortedPortfolioContracts = useMemo(() => sortRows(portfolioContracts, portfolioSortKey, portfolioSortDir, {
+    contractId: (c) => c.contractId,
+    region: (c) => c.region,
+    bucket: (c) => BUCKETS.indexOf(c.bucket),
+    contractValue: (c) => c.contractValue,
+    riskScore: (c) => c.riskScore,
+  }), [portfolioContracts, portfolioSortKey, portfolioSortDir]);
   const selectedTrace = selected ? traceByContract[selected] : null;
 
   const setOutcome = async (contractId, outcome, note) => {
@@ -1210,51 +1431,20 @@ export default function ContractRenewalPOC() {
           <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 16, marginBottom: 18 }}>
             {/* Scatter */}
             <Card style={{ padding: 18 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value Segmentation</div>
-              <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk Score vs. Contract Value ($) — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
-              <ResponsiveContainer width="100%" height={280}>
-                <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
-                  <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
-                  {/* Quadrant tints — reuse each segment's existing badge
-                      background color, so this stays in sync with SEGMENT_BG
-                      instead of being a second, hand-maintained color list. */}
-                  <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" />
-                  <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["High Risk"]} fillOpacity={1} stroke="none" />
-                  <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={0} y2={medianContractValue} fill={SEGMENT_BG["At Risk"]} fillOpacity={1} stroke="none" />
-                  <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={0} y2={medianContractValue} fill={SEGMENT_BG["Standard"]} fillOpacity={1} stroke="none" />
-                  <XAxis type="number" dataKey="x" name="Risk score" domain={[0, 100]} stroke={T.inkFaint} tick={{ fontSize: 11 }} />
-                  <YAxis type="number" dataKey="y" name="Contract value ($)" domain={[0, scatterYMax]} stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
-                  <ZAxis range={[55, 55]} />
-                  <ReferenceLine x={RISK_QUADRANT_THRESHOLD} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Risk " + RISK_QUADRANT_THRESHOLD, position: "insideTopLeft", fill: T.inkFaint, fontSize: 10 }} />
-                  <ReferenceLine y={medianContractValue} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Median value ($)", position: "insideBottomRight", fill: T.inkFaint, fontSize: 10 }} />
-                  <Tooltip
-                    cursor={{ strokeDasharray: "3 3" }}
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null;
-                      const d = payload[0].payload; // the original scatterData point: { x, y, tier, id, name }
-                      return (
-                        <div style={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, padding: "8px 10px" }}>
-                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
-                          <div style={{ color: T.inkMuted }}>{d.id}</div>
-                          <div style={{ marginTop: 4 }}>Risk score: {d.x}</div>
-                          <div style={{ marginTop: 4 }}>Tier: {d.tier}</div>
-                          <div>Contract value ($): ${d.y.toLocaleString()}</div>
-                        </div>
-                      );
-                    }}
-                  />
-                  {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
-                    <Scatter
-                      key={seg}
-                      name={seg}
-                      data={scatterData.filter((d) => d.tier === seg)}
-                      fill={SEGMENT_COLOR[seg]}
-                      onClick={(d) => setSelected(d.id)}
-                      cursor="pointer"
-                    />
-                  ))}
-                </ScatterChart>
-              </ResponsiveContainer>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value Segmentation</div>
+                  <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk Score vs. Contract Value ($) — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
+                </div>
+                <button
+                  onClick={() => setMaximizedChart("scatter")}
+                  title="Maximize"
+                  style={{ border: "none", background: "none", cursor: "pointer", padding: 4, color: T.inkFaint, flexShrink: 0 }}
+                >
+                  <Maximize2 size={15} />
+                </button>
+              </div>
+              {renderScatterChart(280)}
               <div style={{ display: "flex", gap: 14, marginTop: 4, flexWrap: "wrap" }}>
                 {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
                   <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.inkMuted }}>
@@ -1306,10 +1496,17 @@ export default function ContractRenewalPOC() {
             <div style={{ maxHeight: 360, overflowY: "auto" }}>
               <table>
                 <thead><tr>
-                  <th>Customer</th><th>Region</th><th>Channel</th><th>Bucket</th><th>Risk</th><th>Value</th><th>Status</th><th></th>
+                  <SortTh label="Customer" sortKey="customerName" sort={worklistSort} />
+                  <SortTh label="Region" sortKey="region" sort={worklistSort} />
+                  <SortTh label="Channel" sortKey="channel" sort={worklistSort} />
+                  <SortTh label="Bucket" sortKey="bucket" sort={worklistSort} />
+                  <SortTh label="Risk" sortKey="riskScore" sort={worklistSort} />
+                  <SortTh label="Value" sortKey="contractValue" sort={worklistSort} />
+                  <SortTh label="Status" sortKey="status" sort={worklistSort} />
+                  <th></th>
                 </tr></thead>
                 <tbody>
-                  {worklist.map((c) => {
+                  {sortedWorklist.map((c) => {
                     const t = traceByContract[c.contractId];
                     return (
                       <tr key={c.contractId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(c.contractId)}>
@@ -1378,10 +1575,16 @@ export default function ContractRenewalPOC() {
             <div style={{ maxHeight: 420, overflowY: "auto" }}>
               <table>
                 <thead><tr>
-                  <th>Customer</th><th>Milestone</th><th>Campaign</th><th>Retries</th><th>Result</th><th>Latency</th><th>Cost</th>
+                  <SortTh label="Customer" sortKey="customer" sort={traceSort} />
+                  <SortTh label="Milestone" sortKey="milestone" sort={traceSort} />
+                  <SortTh label="Campaign" sortKey="campaign" sort={traceSort} />
+                  <SortTh label="Retries" sortKey="retryCount" sort={traceSort} />
+                  <SortTh label="Result" sortKey="result" sort={traceSort} />
+                  <SortTh label="Latency" sortKey="latencyMs" sort={traceSort} />
+                  <SortTh label="Cost" sortKey="costUsd" sort={traceSort} />
                 </tr></thead>
                 <tbody>
-                  {[...trace].reverse().map((r, i) => (
+                  {sortedTraceRows.map((r, i) => (
                     <tr key={r.runId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(r.contractId)}>
                       <td style={{ fontWeight: 600 }}>{contracts.find((c) => c.contractId === r.contractId)?.customerName}</td>
                       <td>{BUCKET_LABEL[r.milestone]}</td>
@@ -1519,83 +1722,35 @@ export default function ContractRenewalPOC() {
             </div>
           </Card>
           <Card style={{ padding: 18, marginBottom: 16 }}>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={dashCampaignData} margin={{ top: 24, right: 12, bottom: 40, left: 0 }}>
-                <CartesianGrid stroke={T.border} strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" stroke={T.inkFaint} tick={{ fontSize: 10.5 }} interval={0} angle={-20} textAnchor="end" height={60} />
-                <YAxis stroke={T.inkFaint} tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}` }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Assigned" fill={T.borderStrong} radius={[4, 4, 0, 0]}>
-                  <LabelList
-                    dataKey="Assigned"
-                    content={({ x, y, width, index }) => {
-                      const row = dashCampaignData[index];
-                      if (!row) return null;
-                      return (
-                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
-                          {row.Assigned}
-                        </text>
-                      );
-                    }}
-                  />
-                  </Bar>
-                <Bar dataKey="Engaged" fill={T.safe} radius={[4, 4, 0, 0]}>
-                  <LabelList
-                    dataKey="Engaged"
-                    content={({ x, y, width, index }) => {
-                      const row = dashCampaignData[index];
-                      if (!row || !row.Engaged) return null;
-                      return (
-                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
-                          {row.Engaged} ({row.engagedRate}%)
-                        </text>
-                      );
-                    }}
-                  />
-                  </Bar>
-                <Bar dataKey="Declined" fill={T.risk} radius={[4, 4, 0, 0]}>
-                  <LabelList
-                    dataKey="Declined"
-                    content={({ x, y, width, index }) => {
-                      const row = dashCampaignData[index];
-                      if (!row || !row.Declined) return null;
-                      return (
-                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
-                          {row.Declined} ({row.declinedRate}%)
-                        </text>
-                      );
-                    }}
-                  />
-                  </Bar>
-                <Bar dataKey="No response" fill={T.amber} radius={[4, 4, 0, 0]}>
-                  <LabelList
-                    dataKey="No response"
-                    content={({ x, y, width, index }) => {
-                      const row = dashCampaignData[index];
-                      if (!row || !row.noResponse) return null;
-                      return (
-                        <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fontWeight={700} fill={T.ink}>
-                          {row.noResponse} ({row.noResponseRate}%)
-                        </text>
-                      );
-                    }}
-                  />
-                  </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: -8 }}>
+              <button
+                onClick={() => setMaximizedChart("campaign-bar")}
+                title="Maximize"
+                style={{ border: "none", background: "none", cursor: "pointer", padding: 4, color: T.inkFaint }}
+              >
+                <Maximize2 size={15} />
+              </button>
+            </div>
+            {renderCampaignBarChart(300)}
           </Card>
 
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <table>
               <thead>
                 <tr>
-                  <th>Campaign</th><th>Assigned</th><th>Engaged</th><th>Declined</th><th>No response</th>
-                  <th>Total Contract Value $</th><th style={{ color: T.amber}}>Potential $ at risk</th><th style={{ color: T.risk}}>Lost revenue $</th><th style={{ color: T.safe}}>Converted $</th>
+                  <SortTh label="Campaign" sortKey="name" sort={campaignSort} />
+                  <SortTh label="Assigned" sortKey="Assigned" sort={campaignSort} />
+                  <SortTh label="Engaged" sortKey="Engaged" sort={campaignSort} />
+                  <SortTh label="Declined" sortKey="declined" sort={campaignSort} />
+                  <SortTh label="No response" sortKey="noResponse" sort={campaignSort} />
+                  <SortTh label="Total Contract Value $" sortKey="assignedValue" sort={campaignSort} />
+                  <SortTh label="Potential $ at risk" sortKey="potentialAtRiskValue" sort={campaignSort} style={{ color: T.amber }} />
+                  <SortTh label="Lost revenue $" sortKey="lostRevenueValue" sort={campaignSort} style={{ color: T.risk }} />
+                  <SortTh label="Converted $" sortKey="potentialRevenueValue" sort={campaignSort} style={{ color: T.safe }} />
                 </tr>
               </thead>
               <tbody>
-                {dashCampaignData.map((row) => (
+                {sortedCampaignData.map((row) => (
                   <tr key={row.name} className="rowhover">
                     <td>{row.name}</td>
                     <td>{row.Assigned}</td>
@@ -1612,6 +1767,49 @@ export default function ContractRenewalPOC() {
             </table>
           </Card>
         </>
+      )}
+
+      {/* Chart maximize modal — shared by the scatter and campaign bar charts.
+          Click the backdrop or the minimize button to close; z-index sits
+          below the detail drawer so selecting a contract from the maximized
+          scatter chart surfaces the drawer on top instead of behind it. */}
+      {maximizedChart && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(22,27,34,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 45, padding: 24 }}
+          onClick={() => setMaximizedChart(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: T.surface, borderRadius: 12, padding: 22, width: "min(1100px, 100%)", maxHeight: "90vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>
+                {maximizedChart === "scatter" ? "Value Segmentation" : "Campaign performance"}
+              </div>
+              <button
+                onClick={() => setMaximizedChart(null)}
+                title="Minimize"
+                style={{ border: "none", background: "none", cursor: "pointer", padding: 4, color: T.inkFaint }}
+              >
+                <Minimize2 size={18} />
+              </button>
+            </div>
+            {maximizedChart === "scatter" && (
+              <>
+                {renderScatterChart(560)}
+                <div style={{ display: "flex", gap: 14, marginTop: 8, flexWrap: "wrap" }}>
+                  {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
+                    <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.inkMuted }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 99, background: SEGMENT_COLOR[seg], display: "inline-block" }} />
+                      {seg}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {maximizedChart === "campaign-bar" && renderCampaignBarChart(520)}
+          </div>
+        </div>
       )}
 
       {/* Detail drawer */}
@@ -1656,9 +1854,15 @@ export default function ContractRenewalPOC() {
                 </div>
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
                   <table>
-                    <thead><tr><th>Contract</th><th>Region</th><th>Bucket</th><th>Value</th><th>Risk</th></tr></thead>
+                    <thead><tr>
+                      <SortTh label="Contract" sortKey="contractId" sort={portfolioSort} />
+                      <SortTh label="Region" sortKey="region" sort={portfolioSort} />
+                      <SortTh label="Bucket" sortKey="bucket" sort={portfolioSort} />
+                      <SortTh label="Value" sortKey="contractValue" sort={portfolioSort} />
+                      <SortTh label="Risk" sortKey="riskScore" sort={portfolioSort} />
+                    </tr></thead>
                     <tbody>
-                      {portfolioContracts.map((pc) => (
+                      {sortedPortfolioContracts.map((pc) => (
                         <tr
                           key={pc.contractId}
                           className="rowhover"

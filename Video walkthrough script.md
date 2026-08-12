@@ -27,3 +27,19 @@ Changes based on the region, channel & contract expiration filters
 
 
 
+---
+
+introducing contract renewal portal -current renewal rate - Key aspects impacting renewal rate - 
+    Portal enables tracking out come and Single source of truth
+
+Technical details: (10-15 seconds)
+    2 buckets:
+        Dashboard = 
+        Renewal Prioritization
+    Visual represenation of contract
+
+
++ Table - Column sort
++ Search
++ Section wise Minimize & maximize
++ 
