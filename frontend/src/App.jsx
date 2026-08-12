@@ -1620,10 +1620,10 @@ export default function ContractRenewalPOC() {
                 <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.amber} />
                 <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
-                <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} sub="Active contracts" />
-                <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
-                <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
-                <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
+                <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
+                <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
+                <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
+                <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
               </div>
             </Card>
 
@@ -1865,11 +1865,11 @@ export default function ContractRenewalPOC() {
               <StatBlock label="At-risk contracts" value={dashGlobalMetrics.segmentCounts["At Risk"]} sub="At Risk segment" accent={T.amber} />
               <StatBlock label="Lost" value={dashGlobalMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
               <StatBlock label="" value="" />
-              <StatBlock label="Total contract value" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} sub="Active contracts" />
-              <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000).toFixed(0)}k`} />
-              <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
-              <StatBlock label="Converted $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
-              <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
+              <StatBlock label="Total contract value" value={`$${(dashGlobalMetrics.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
+              <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000000).toFixed(2)}M`} />
+              <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
+              <StatBlock label="Converted $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
+              <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
             </div>
             <SegmentBar counts={dashGlobalMetrics.segmentCounts} />
           </Card>
@@ -1896,11 +1896,11 @@ export default function ContractRenewalPOC() {
                     <StatBlock label="High risk contracts" value={m.segmentCounts["High Risk"]} sub="High Risk segment" accent={T.risk} />
                     <StatBlock label="At-risk contracts" value={m.segmentCounts["At Risk"]} sub="At Risk segment" accent={T.amber} />
                     <StatBlock label="" value="" />
-                    <StatBlock label="Total contract value" value={`$${(m.totalValue / 1000).toFixed(0)}k`} sub="Active contracts" />
-                    <StatBlock label="Margin" value={`$${(m.totalMargin / 1000).toFixed(0)}k`} />
-                    <StatBlock label="Converted $" value={`$${(m.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
-                    <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
-                    <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
+                    <StatBlock label="Total contract value" value={`$${(m.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
+                    <StatBlock label="Margin" value={`$${(m.totalMargin / 1000000).toFixed(2)}M`} />
+                    <StatBlock label="Converted $" value={`$${(m.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
+                    <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
+                    <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
                   </div>
                   <SegmentBar counts={m.segmentCounts} />
                 </Card>
