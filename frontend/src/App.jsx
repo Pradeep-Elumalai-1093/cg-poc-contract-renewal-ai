@@ -1465,7 +1465,7 @@ export default function ContractRenewalPOC() {
                 <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.amber} />
                 <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
                 <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
-                <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} />
+                <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000).toFixed(0)}k`} sub="Active contracts" />
                 <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
                 <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
                 <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
@@ -1669,15 +1669,22 @@ export default function ContractRenewalPOC() {
             <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>
               Global{dashBucketFilter ? ` — ${BUCKET_LABEL[dashBucketFilter]}` : ""}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
               <StatBlock label="Customers" value={dashGlobalMetrics.customerCount} />
               <StatBlock label="Contracts" value={dashGlobalMetrics.contractCount} />
               <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
-              <StatBlock label="Total contract value" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} sub="across filtered portfolio" />
+              <StatBlock label="" value="" />
+              <StatBlock label="" value="" />
+              <StatBlock label="Healthy contracts" value={dashGlobalMetrics.segmentCounts["Healthy"]} sub="High Risk segment" accent={T.safe} />
+              <StatBlock label="High risk contracts" value={dashGlobalMetrics.segmentCounts["High Risk"]} sub="High Risk segment" accent={T.risk} />
+              <StatBlock label="At-risk contracts" value={dashGlobalMetrics.segmentCounts["At Risk"]} sub="At Risk segment" accent={T.amber} />
+              <StatBlock label="Lost" value={dashGlobalMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
+              <StatBlock label="" value="" />
+              <StatBlock label="Total contract value" value={`$${(dashGlobalMetrics.totalValue / 1000).toFixed(0)}k`} sub="Active contracts" />
               <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000).toFixed(0)}k`} />
+              <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
               <StatBlock label="Converted $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
               <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
-              <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
             </div>
             <SegmentBar counts={dashGlobalMetrics.segmentCounts} />
           </Card>
@@ -1694,11 +1701,18 @@ export default function ContractRenewalPOC() {
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                    {console.log(m)}
                     <StatBlock label="Customers" value={m.customerCount} />
                     <StatBlock label="Contracts" value={m.contractCount} />
-                    <StatBlock label="Total contract value" value={`$${(m.totalValue / 1000).toFixed(0)}k`} sub="across filtered portfolio" />
-                    <StatBlock label="Margin" value={`$${(m.totalMargin / 1000).toFixed(0)}k`} />
                     <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+                    <StatBlock label="" value="" />
+
+                    <StatBlock label="Healthy contracts" value={m.segmentCounts["Healthy"]} sub="High Risk segment" accent={T.safe} />
+                    <StatBlock label="High risk contracts" value={m.segmentCounts["High Risk"]} sub="High Risk segment" accent={T.risk} />
+                    <StatBlock label="At-risk contracts" value={m.segmentCounts["At Risk"]} sub="At Risk segment" accent={T.amber} />
+                    <StatBlock label="" value="" />
+                    <StatBlock label="Total contract value" value={`$${(m.totalValue / 1000).toFixed(0)}k`} sub="Active contracts" />
+                    <StatBlock label="Margin" value={`$${(m.totalMargin / 1000).toFixed(0)}k`} />
                     <StatBlock label="Converted $" value={`$${(m.potentialRevenueValue / 1000).toFixed(0)}k`} sub="engaged" accent={T.safe} />
                     <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000).toFixed(0)}k`} sub="no response received" accent={T.amber} />
                     <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000).toFixed(0)}k`} sub="declined" accent={T.risk} />
