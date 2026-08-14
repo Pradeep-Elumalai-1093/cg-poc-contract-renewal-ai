@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from state import state, CAMPAIGN_TAXONOMY, REGIONS, BUCKETS
 from rules import MODEL_INFO, suggested_renewal_terms
 
-app = FastAPI(title="Contract Renewal POC")
+app = FastAPI(title="Proactive Contract Renewal")
 
 # Only needed while running the Vite dev server separately (port 5173).
 # When the frontend is built and served from this same process, CORS is moot.
@@ -162,7 +162,7 @@ async def _process_batch(due: list[dict]):
         async with semaphore:
             prior = state.latest_trace_for(contract["contractId"])
             # Generate ticket/customer summaries now if they weren't already
-            # produced ahead of time via the manual buttons — the batch
+            # produced ahead of time via the manual buttons - the batch
             # should never silently proceed with "Not yet generated."
             ticket_summary = await _ensure_ticket_summary(contract)
             customer_summary = await _ensure_customer_summary(contract)
@@ -287,7 +287,7 @@ def get_outcome_by_risk_bucket():
     """Live proxy for a backtest: buckets logged campaign outcomes by the
     risk score at the time of the recommendation. This is NOT a validated
     renewal-outcome backtest (we don't have historical renewal ground truth)
-    — it's an honest, live signal of whether risk ranking correlates with
+    - it's an honest, live signal of whether risk ranking correlates with
     campaign engagement, and it's labeled as such in the UI."""
     bucket_edges = [(0, 19), (20, 39), (40, 59), (60, 79), (80, 100)]
     labels = ["0-19", "20-39", "40-59", "60-79", "80-100"]

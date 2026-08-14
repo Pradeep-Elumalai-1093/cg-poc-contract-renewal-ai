@@ -9,7 +9,7 @@ import { api } from "./api.js";
 /* ---------------------------------------------------------------
    DESIGN TOKENS
    Internal ops tool for sales reps / account managers. Functional,
-   data-dense, industrial — not a marketing page. Cool graphite
+   data-dense, industrial - not a marketing page. Cool graphite
    surface, ink-navy text, a single warm alert hue reserved for risk,
    a deep teal reserved for healthy/renewed. Everything else stays
    quiet so risk state is the only thing that visually shouts.
@@ -28,7 +28,7 @@ const T = {
   safe: "#1F7A5C",
   safeBg: "#E7F3EE",
   // "info" is rebranded to Carrier's officially documented brand blue
-  // (PMS 072C / #142C73, per Carrier's 2013 Brand Identity Guidelines) —
+  // (PMS 072C / #142C73, per Carrier's 2013 Brand Identity Guidelines) -
   // this naturally carries through to every channel badge, link, and
   // active-state surface that already used this token.
   info: "#142C73",
@@ -38,7 +38,7 @@ const T = {
   purple: "#5A4FB0",
   purpleBg: "#EEECFA",
   // Explicit brand tokens for primary chrome (buttons, active tab, header
-  // accent) — same Carrier Blue, kept separate from "info" for clarity
+  // accent) - same Carrier Blue, kept separate from "info" for clarity
   // about which usages are brand-driven vs. semantic.
   brand: "#142C73",
   brandBg: "#E6E9F2",
@@ -46,12 +46,12 @@ const T = {
 };
 
 // Mirrors the "score >= 50" split named in the risk x value segmentation
-// (illustrative, per project assumptions — not read from rules.py, which
+// (illustrative, per project assumptions - not read from rules.py, which
 // isn't exposed over the API). If that threshold changes server-side, this
 // line and the backend's segment cutoff will drift apart.
 const RISK_QUADRANT_THRESHOLD = 50;
 // Red / Yellow / Green / Blue per the risk x value quadrant scheme. Reuses
-// existing theme tokens (T.info/T.infoBg — already the app's blue, used for
+// existing theme tokens (T.info/T.infoBg - already the app's blue, used for
 // "Medium" priority elsewhere) rather than introducing new colors. Changing
 // this one map recolors every segment badge in the app, not just the scatter.
 const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.info };
@@ -61,7 +61,7 @@ const BUCKET_LABEL = {
   ">90": "Not yet due", "90": "Expiring in \u226490 days", "60": "Expiring in \u226460 days",
   "45": "Expiring in \u226445 days", "30": "Expiring in \u226430 days", "10": "Expiring in \u226410 days", "Lost": "Lost / expired",
 };
-// Fuller sentence for a hover tooltip on the bucket cards specifically —
+// Fuller sentence for a hover tooltip on the bucket cards specifically -
 // BUCKET_LABEL above stays short since it's also reused in tight spaces
 // (table cells, pill badges) where a full sentence wouldn't fit.
 const BUCKET_TOOLTIP = {
@@ -93,7 +93,7 @@ const REGIONS = [
 const COST_PER_M_INPUT = 3.0;
 const COST_PER_M_OUTPUT = 15.0;
 
-// Display-only — must stay in sync with MAX_RETRIES in backend/agents.py,
+// Display-only - must stay in sync with MAX_RETRIES in backend/agents.py,
 // which is what actually enforces the retry limit. This constant only
 // labels the "limit N" sub-text on the Trace tab's Avg. retries stat.
 const MAX_RETRIES = 2;
@@ -192,7 +192,7 @@ function StatBlock({ label, value, sub, accent }) {
   );
 }
 
-// Table sorting — one hook + one comparator + one header cell, reused by
+// Table sorting - one hook + one comparator + one header cell, reused by
 // every sortable table instead of bespoke sort state/logic per table.
 function useSort(defaultKey = null, defaultDir = "asc") {
   const [sortKey, setSortKey] = useState(defaultKey);
@@ -286,12 +286,12 @@ function DraftContent({ content, contentError, customerName }) {
   if (!content) return null;
 
   // No real recipient email exists anywhere in this POC's data model (synthetic
-  // customers and dealers have no email field) — a slugified customer name at
+  // customers and dealers have no email field) - a slugified customer name at
   // a placeholder domain stands in for it, per the agreed placeholder convention.
   // This opens whatever the browser/OS has set as the default mail handler
   // (Outlook, if that's the user's default) with the fields below prefilled.
   const recipientEmail = `${(customerName || "customer").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}@client.com`;
-  // Outlook Web's own compose URL, not mailto: — mailto: always goes through
+  // Outlook Web's own compose URL, not mailto: - mailto: always goes through
   // whatever the OS has registered as the default mail handler (the desktop
   // app, if one's installed), and there's no browser-level way to redirect
   // that to a specific webmail provider instead. This is Outlook-specific;
@@ -337,7 +337,7 @@ function EscalationPanel({ record, onToggleAction }) {
   const actionDone = record.actionStatus === "Action done";
   return (
     <>
-      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Escalation — human review needed</div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>Escalation - human review needed</div>
       <Card style={{ padding: 14, marginBottom: 14, background: T.riskBg, borderColor: T.risk }}>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6, color: T.ink }}>
           {(record.suggestedActions || []).map((a, i) => <li key={i}>{a}</li>)}
@@ -555,11 +555,11 @@ function SegmentBar({ counts }) {
 }
 
 // Rolls a list of contracts up into the KPIs the Dashboard/Renewal Prioritization
-// tabs show — one definition of these $ metrics, not one per call site.
+// tabs show - one definition of these $ metrics, not one per call site.
 // - "Potential $ at risk" = still-open contract, outreach sent, No response
-//   logged — uncertain, not yet a confirmed loss.
+//   logged - uncertain, not yet a confirmed loss.
 // - "Lost revenue $" = either the contract already churned (bucket ===
-//   "Lost") or the customer explicitly Declined — both are a realized loss,
+//   "Lost") or the customer explicitly Declined - both are a realized loss,
 //   not a maybe. Bucket-Lost contracts never get a trace outcome at all
 //   (due_contracts() excludes the "Lost" bucket from the batch pipeline
 //   entirely), so this can't be computed from outcome alone or every Lost
@@ -590,7 +590,7 @@ function aggregateBookMetrics(list, traceByContract) {
 // Same shape/logic as the backend's /api/campaigns (assigned/engaged/
 // declined/noResponse per taxonomy name), plus the $ metrics, computed
 // over whatever trace subset the Dashboard filters produce. No bucket-Lost
-// case here — a trace record's milestone can never be "Lost" (same reason
+// case here - a trace record's milestone can never be "Lost" (same reason
 // as above), so Declined is the only source of lost revenue at this level.
 function aggregateCampaigns(traceList) {
   const result = {};
@@ -612,7 +612,7 @@ function aggregateCampaigns(traceList) {
 
 // Ported from architecture_diagrams.html's <section id="flow">, including its
 // drag-to-rearrange behavior (originally a page-global <script> operating on
-// document.querySelectorAll) — scoped to this component's own ref here so it
+// document.querySelectorAll) - scoped to this component's own ref here so it
 // can't interfere with (or be interfered with by) anything else on the page,
 // and cleaned up on unmount instead of being a bare global side effect.
 function ApplicationFlowDiagram() {
@@ -685,7 +685,7 @@ function ApplicationFlowDiagram() {
   return (
     <Card style={{ padding: "22px 26px", marginBottom: 18, borderTop: `3px solid ${T.brand}` }}>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>How it runs</div>
-      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 4px" }}>Application flow — daily batch run</h3>
+      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 4px" }}>Application flow - daily batch run</h3>
       <p style={{ fontSize: 12.5, color: T.inkMuted, margin: "0 0 10px", maxWidth: 700 }}>
         What happens end to end when the daily batch is triggered.
       </p>
@@ -768,7 +768,7 @@ function OutcomeBucketChart({ data }) {
         <span style={{ color: T.inkFaint, marginLeft: "auto" }}>Responses={data.totalWithOutcome}</span>
       </div>
 
-      {/* $ lost (Declined only) and $ converted (Engaged) per risk bucket —
+      {/* $ lost (Declined only) and $ converted (Engaged) per risk bucket -
           same figures as the campaign table's Lost revenue $ / Potential
           revenue $, just broken down by risk score instead of by campaign. */}
       <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 10, paddingTop: 8 }}>
@@ -837,7 +837,7 @@ export default function ContractRenewalPOC() {
   const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
   const [worklistSearch, setWorklistSearch] = useState("");
   // Dashboard tab's own Global -> Regional -> Segment -> Milestone drill-down.
-  // Kept separate from the Renewal Prioritization filters above — the two tabs
+  // Kept separate from the Renewal Prioritization filters above - the two tabs
   // answer different questions, so filtering one shouldn't silently filter
   // the other when you switch tabs.
   const [dashRegionFilter, setDashRegionFilter] = useState([]);
@@ -847,7 +847,7 @@ export default function ContractRenewalPOC() {
   const [selected, setSelected] = useState(null);
   // Which chart, if any, is currently blown up into the full-screen modal.
   const [maximizedChart, setMaximizedChart] = useState(null); // "scatter" | "campaign-bar" | null
-  // Which tab is active inside the contract detail drawer — reset to the
+  // Which tab is active inside the contract detail drawer - reset to the
   // default whenever a different contract is opened, so switching contracts
   // doesn't leave you stranded on a tab that made sense for the last one.
   const [drawerTab, setDrawerTab] = useState("action");
@@ -889,7 +889,7 @@ export default function ContractRenewalPOC() {
     }
   };
 
-  // Initial load — also check whether a batch is already running server-side
+  // Initial load - also check whether a batch is already running server-side
   // (e.g. the page was refreshed mid-run) and resume polling if so, instead
   // of losing track of it.
   React.useEffect(() => {
@@ -902,7 +902,7 @@ export default function ContractRenewalPOC() {
           setRunning(true);
         }
       } catch (e) {
-        // non-fatal — just means we can't confirm batch status on load
+        // non-fatal - just means we can't confirm batch status on load
       }
       setLoaded(true);
     })();
@@ -953,7 +953,7 @@ export default function ContractRenewalPOC() {
       const message = String(e.message || e);
       if (message.toLowerCase().includes("already running")) {
         // Someone else (or a prior click before this one landed) already
-        // started a batch — stay in the running state, the poll effect
+        // started a batch - stay in the running state, the poll effect
         // above will pick up real progress and clear it when done.
       } else {
         setApiError(message);
@@ -962,7 +962,7 @@ export default function ContractRenewalPOC() {
     }
   }, []);
 
-  // Region/channel only — bucket cards need this unfiltered by bucketFilter
+  // Region/channel only - bucket cards need this unfiltered by bucketFilter
   // itself, otherwise selecting one bucket would zero out every other card.
   const regionChannelContracts = useMemo(() => {
     return contracts.filter((c) => {
@@ -984,14 +984,14 @@ export default function ContractRenewalPOC() {
   // stays in sync with the region/channel/bucket filters instantly. Each trace
   // record's own context.region/context.channel/context.milestone is a
   // snapshot taken at the time that recommendation ran, which is what
-  // filtering should key off — not the contract's current fields (though
+  // filtering should key off - not the contract's current fields (though
   // those are the same in practice, since none of them change after generation).
   const filteredOutcomeByRiskBucket = useMemo(() => {
     const bucketEdges = [[0, 19], [20, 39], [40, 59], [60, 79], [80, 100]];
     const labels = ["0-19", "20-39", "40-59", "60-79", "80-100"];
     const engaged = [0, 0, 0, 0, 0];
     const notEngaged = [0, 0, 0, 0, 0];
-    const revenueLost = [0, 0, 0, 0, 0];       // Declined only — realized loss, not "no response" (uncertain)
+    const revenueLost = [0, 0, 0, 0, 0];       // Declined only - realized loss, not "no response" (uncertain)
     const revenueConverted = [0, 0, 0, 0, 0];  // Engaged
     let totalWithOutcome = 0;
 
@@ -1026,7 +1026,7 @@ export default function ContractRenewalPOC() {
     return c;
   }, [regionChannelContracts]);
 
-  // Dashboard tab: region/channel/segment only — bucket cards here need this
+  // Dashboard tab: region/channel/segment only - bucket cards here need this
   // unfiltered by dashBucketFilter itself, same reasoning as regionChannelContracts above.
   const dashRegionChannelSegmentContracts = useMemo(() => {
     return contracts.filter((c) => {
@@ -1049,7 +1049,7 @@ export default function ContractRenewalPOC() {
     return c;
   }, [dashRegionChannelSegmentContracts]);
 
-  // Trace-side counterpart for the campaign section — filters on each trace
+  // Trace-side counterpart for the campaign section - filters on each trace
   // record's own snapshotted context (region/channel/segment/milestone), same
   // design principle already used by filteredOutcomeByRiskBucket above: the
   // snapshot at recommendation time, not the contract's current live fields.
@@ -1078,11 +1078,11 @@ export default function ContractRenewalPOC() {
     const agg = aggregateCampaigns(dashFilteredTrace);
     return CAMPAIGN_TAXONOMY.map((t) => {
       const s = agg[t.name];
-      const responseCount = s.engaged + s.declined; // customer responded, either way — same definition the old Campaigns tab used
+      const responseCount = s.engaged + s.declined; // customer responded, either way - same definition the old Campaigns tab used
       return {
         name: t.name, Assigned: s.assigned, Engaged: s.engaged, Declined: s.declined, "No response": s.noResponse,
         declined: s.declined, noResponse: s.noResponse, responseCount,
-        // Each bar's own rate is that bar's count over Assigned — previously
+        // Each bar's own rate is that bar's count over Assigned - previously
         // every bar showed the same combined (engaged+declined)/assigned
         // figure, which was only ever correct for one of the three bars.
         engagedRate: s.assigned ? Math.round((s.engaged / s.assigned) * 100) : 0,
@@ -1094,7 +1094,7 @@ export default function ContractRenewalPOC() {
     });
   }, [dashFilteredTrace]);
 
-  // Shared by the inline card and the maximize modal — same chart, just a
+  // Shared by the inline card and the maximize modal - same chart, just a
   // different height, so the two views can't drift apart.
   const renderCampaignBarChart = (height) => (
     <ResponsiveContainer width="100%" height={height}>
@@ -1164,7 +1164,7 @@ export default function ContractRenewalPOC() {
     </ResponsiveContainer>
   );
 
-  // Totals across every campaign, for the summary stat row above the chart —
+  // Totals across every campaign, for the summary stat row above the chart -
   // sums dashCampaignData rather than re-deriving from dashFilteredTrace, so
   // there's one pass over the trace data, not two.
   const dashCampaignTotals = useMemo(() => {
@@ -1196,7 +1196,7 @@ export default function ContractRenewalPOC() {
   }, [filteredContracts]);
 
   // Search narrows the worklist further, on top of the region/channel/bucket
-  // filters — matches customer name, contract ID, region, channel, or the
+  // filters - matches customer name, contract ID, region, channel, or the
   // recommended campaign type.
   const searchedWorklist = useMemo(() => {
     const q = worklistSearch.trim().toLowerCase();
@@ -1245,7 +1245,7 @@ export default function ContractRenewalPOC() {
     x: c.riskScore, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
   })), [filteredContracts]);
 
-  // Horizontal quadrant split — median of whatever's currently filtered,
+  // Horizontal quadrant split - median of whatever's currently filtered,
   // so it tracks the visible book rather than a fixed dollar figure.
   const medianContractValue = useMemo(() => {
     const vals = filteredContracts.map((c) => c.contractValue).sort((a, b) => a - b);
@@ -1255,20 +1255,20 @@ export default function ContractRenewalPOC() {
   }, [filteredContracts]);
 
   // Explicit y-axis ceiling (rounded up, +10% headroom) so the quadrant tint
-  // rectangles and the axis domain agree exactly — recharts' auto domain
+  // rectangles and the axis domain agree exactly - recharts' auto domain
   // wouldn't necessarily line up with a hand-picked ReferenceArea bound.
   const scatterYMax = useMemo(() => {
     const maxVal = Math.max(1, ...scatterData.map((d) => d.y));
     return Math.ceil((maxVal * 1.1) / 5000) * 5000;
   }, [scatterData]);
 
-  // Shared by the inline card and the maximize modal — one definition of the
+  // Shared by the inline card and the maximize modal - one definition of the
   // chart, just rendered at a different height, so the two views can't drift.
   const renderScatterChart = (height) => (
     <ResponsiveContainer width="100%" height={height}>
       <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
         <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
-        {/* Quadrant tints — reuse each segment's existing badge
+        {/* Quadrant tints - reuse each segment's existing badge
             background color, so this stays in sync with SEGMENT_BG
             instead of being a second, hand-maintained color list. */}
         <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" label={{ value: "Q4: Low risk, High value", position: "insideTopLeft", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
@@ -1311,14 +1311,14 @@ export default function ContractRenewalPOC() {
   );
 
   // Same helper the Dashboard tab uses for Total value / At risk $ / Converted
-  // $ — one definition of these metrics, not a second copy for this tab.
+  // $ - one definition of these metrics, not a second copy for this tab.
   const plannerBookMetrics = useMemo(
     () => aggregateBookMetrics(filteredContracts, traceByContract),
     [filteredContracts, traceByContract]
   );
 
   // "Action required" is the default actionStatus every trace record gets
-  // and flips to "Action done" once a rep marks it complete — scoped to
+  // and flips to "Action done" once a rep marks it complete - scoped to
   // filteredContracts so this stays in sync with the region/channel/bucket
   // filters instead of reading the backend's unfiltered global total.
   const actionsNeeded = useMemo(
@@ -1407,7 +1407,7 @@ export default function ContractRenewalPOC() {
           </div>
         </div>
 
-        {/* <div style={{ textAlign: "right" }}>
+        <div style={{ textAlign: "right" }}>
           <button
             onClick={runBatch}
             disabled={running || dueContracts.length === 0}
@@ -1421,7 +1421,7 @@ export default function ContractRenewalPOC() {
             {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
-        </div> */}
+        </div>
           
       </div>
 
@@ -1440,12 +1440,12 @@ export default function ContractRenewalPOC() {
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: T.brand, textTransform: "uppercase", marginBottom: 6 }}>What we're building</div>
             <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 4px" }}>Proactive Contract Renewal</h2>
             <p style={{ fontSize: 13.5, color: T.inkMuted, margin: "0 0 20px", fontStyle: "italic" }}>
-              Not a contract renewal prediction tool — a proactive renewal system.
+              Not a contract renewal prediction tool - a proactive renewal system.
             </p>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>The problem</div>
             <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
-              CST renews thousands of HVAC service contracts every year across NATT, ETT, and APAC TT. Today, that
+              climate solutions transportation (CST) renews thousands of service contracts every year. Today, that
               process is reactive: an at-risk account is usually noticed only after the contract has already lapsed
               &mdash; or not noticed at all. The signals that would have predicted the loss (a slipping SLA, a late
               payment, a cooling NPS score, a competitor circling) exist somewhere in the business, but nothing pulls
@@ -1589,7 +1589,7 @@ export default function ContractRenewalPOC() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value Segmentation</div>
-                  <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk Score vs. Contract Value ($) — quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
+                  <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk Score vs. Contract Value ($) - quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
                 </div>
                 <button
                   onClick={() => setMaximizedChart("scatter")}
@@ -1619,7 +1619,7 @@ export default function ContractRenewalPOC() {
                 <StatBlock label="High risk contracts" value={filteredContracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
                 <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.amber} />
                 <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
-                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
                 <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
                 <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
                 <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
@@ -1636,7 +1636,7 @@ export default function ContractRenewalPOC() {
                 <OutcomeBucketChart data={filteredOutcomeByRiskBucket} />
               ) : (
                 <div style={{ fontSize: 12, color: T.inkFaint, padding: "18px 0", textAlign: "center" }}>
-                  Not enough logged outcomes yet for this filter — log a few via Feedback Logging, or clear the filters.
+                  Not enough logged outcomes yet for this filter - log a few via Feedback Logging, or clear the filters.
                 </div>
               )}
             </Card>
@@ -1645,7 +1645,7 @@ export default function ContractRenewalPOC() {
           {/* Worklist */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `— ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `- ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ position: "relative" }}>
                   <Search size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: T.inkFaint }} />
@@ -1699,7 +1699,7 @@ export default function ContractRenewalPOC() {
                         <td><Badge text={`${c.segment} · ${c.riskScore}`} color={SEGMENT_COLOR[c.segment]} bg={SEGMENT_BG[c.segment]} /></td>
                         <td>${c.contractValue.toLocaleString()}</td>
                         <td style={{ color: t?.recommendation?.campaign ? T.ink : T.inkFaint }}>
-                          <Badge text={t?.recommendation?.campaign || "—"} bg={T.purpleBg} />
+                          <Badge text={t?.recommendation?.campaign || "-"} bg={T.purpleBg} />
                         </td>
                         <td>
                           {!t && <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>}
@@ -1773,7 +1773,7 @@ export default function ContractRenewalPOC() {
                     <tr key={r.runId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(r.contractId)}>
                       <td style={{ fontWeight: 600 }}>{contracts.find((c) => c.contractId === r.contractId)?.customerName}</td>
                       <td>{BUCKET_LABEL[r.milestone]}</td>
-                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "—"}</td>
+                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "-"}</td>
                       <td>{r.retryCount}</td>
                       <td>
                         {r.error
@@ -1789,7 +1789,7 @@ export default function ContractRenewalPOC() {
                     </tr>
                   ))}
                   {trace.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet — run the daily batch from the `Renewal Prioritization` tab.</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet - run the daily batch from the `Renewal Prioritization` tab.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1800,7 +1800,7 @@ export default function ContractRenewalPOC() {
 
       {tab === "dashboard" && (
         <>
-          {/* Drill-down filters — same chip pattern as Renewal Prioritization, plus
+          {/* Drill-down filters - same chip pattern as Renewal Prioritization, plus
               a Segment filter. No filter selected = Global; adding region/
               channel/segment/bucket chips narrows down to Regional / Segment /
               Milestone level, all using the same underlying data. */}
@@ -1829,7 +1829,7 @@ export default function ContractRenewalPOC() {
             )}
           </div>
 
-          {/* Milestone drill-down — same cards as Renewal Prioritization, own state */}
+          {/* Milestone drill-down - same cards as Renewal Prioritization, own state */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 20 }}>
             {BUCKETS.map((b) => (
               <Card
@@ -1852,12 +1852,12 @@ export default function ContractRenewalPOC() {
           <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Book overview</div>
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>
-              Global{dashBucketFilter ? ` — ${BUCKET_LABEL[dashBucketFilter]}` : ""}
+              Global{dashBucketFilter ? ` - ${BUCKET_LABEL[dashBucketFilter]}` : ""}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
               <StatBlock label="Customers" value={dashGlobalMetrics.customerCount} />
               <StatBlock label="Contracts" value={dashGlobalMetrics.contractCount} />
-              <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+              <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
               <StatBlock label="" value="" />
               <StatBlock label="" value="" />
               <StatBlock label="Healthy contracts" value={dashGlobalMetrics.segmentCounts["Healthy"]} sub="High Risk segment" accent={T.safe} />
@@ -1889,7 +1889,7 @@ export default function ContractRenewalPOC() {
                     {console.log(m)}
                     <StatBlock label="Customers" value={m.customerCount} />
                     <StatBlock label="Contracts" value={m.contractCount} />
-                    <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "—"} sub="of logged outcomes" />
+                    <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
                     <StatBlock label="" value="" />
 
                     <StatBlock label="Healthy contracts" value={m.segmentCounts["Healthy"]} sub="High Risk segment" accent={T.safe} />
@@ -1908,7 +1908,7 @@ export default function ContractRenewalPOC() {
             })}
           </div>
 
-          {/* Campaign performance — same filters as above, applied to trace
+          {/* Campaign performance - same filters as above, applied to trace
               records via their own snapshotted context. */}
           <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Campaign performance</div>
           <Card style={{ padding: 18, marginBottom: 16 }}>
@@ -1968,7 +1968,7 @@ export default function ContractRenewalPOC() {
         </>
       )}
 
-      {/* Chart maximize modal — shared by the scatter and campaign bar charts.
+      {/* Chart maximize modal - shared by the scatter and campaign bar charts.
           Click the backdrop or the minimize button to close; z-index sits
           below the detail drawer so selecting a contract from the maximized
           scatter chart surfaces the drawer on top instead of behind it. */}
@@ -2035,7 +2035,7 @@ export default function ContractRenewalPOC() {
             {selectedContract.bucket === "Lost" && selectedContract.lostReasons && selectedContract.lostReasons.length > 0 && (
               <Card style={{ padding: 14, marginBottom: 16, background: T.riskBg, borderColor: T.risk }}>
                 <div style={{ fontSize: 11.5, fontWeight: 700, color: T.risk, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
-                  Reason for loss — top service issues
+                  Reason for loss - top service issues
                 </div>
                 <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: T.ink, lineHeight: 1.6 }}>
                   {selectedContract.lostReasons.map((reason, i) => <li key={i}>{reason}</li>)}
@@ -2049,7 +2049,7 @@ export default function ContractRenewalPOC() {
             {portfolioContracts.length > 1 && (
               <>
                 <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
-                  Customer portfolio — {portfolioContracts.length} contracts
+                  Customer portfolio - {portfolioContracts.length} contracts
                 </div>
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
                   <table>
@@ -2119,7 +2119,7 @@ export default function ContractRenewalPOC() {
                       <span style={{ fontSize: 13, fontWeight: 700, color: T.risk }}>Run failed</span>
                     </div>
                     <div style={{ fontSize: 12.5, color: T.ink }}>{selectedTrace.errorMessage}</div>
-                    <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed — it will be retried on the next batch run.</div>
+                    <div style={{ fontSize: 11.5, color: T.inkMuted, marginTop: 8 }}>This contract-milestone was not marked as processed - it will be retried on the next batch run.</div>
                   </Card>
                 )}
 
@@ -2192,7 +2192,7 @@ export default function ContractRenewalPOC() {
               <>
                 {!selectedTrace && (
                   <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>
-                    No evaluation available yet — run a recommendation first.
+                    No evaluation available yet - run a recommendation first.
                   </div>
                 )}
 

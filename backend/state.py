@@ -1,5 +1,5 @@
 """
-In-memory data layer. No database, per the POC design — everything lives in
+In-memory data layer. No database, per the POC design - everything lives in
 process memory and resets when the server restarts.
 """
 import random
@@ -62,7 +62,7 @@ FEEDBACK_POOL = {
     "Negative": [
         ("Responsiveness", "Frustrated with how long it took to resolve our refrigeration issue."),
         ("Pricing", "Feels like pricing has crept up without much explanation."),
-        ("Account Relationship", "Wish we heard from our rep more often \u2014 feels like an afterthought."),
+        ("Account Relationship", "Wish we heard from our rep more often - feels like an afterthought."),
         ("Responsiveness", "Had to follow up multiple times to get a technician scheduled."),
         ("Service Quality", "Considering other options given the recent service issues."),
     ],
@@ -100,7 +100,7 @@ def _generate_feedback_entries(count: int, min_days_ago: int, max_days_ago: int,
 def _generate_customer_feedback(service_trend_bias: str) -> dict:
     """Historical (12+ months back) and recent-12-months feedback, generated
     with a mild sentiment skew so accounts that are already trending risky
-    tend to have more negative recent feedback \u2014 not purely random, so the
+    tend to have more negative recent feedback - not purely random, so the
     data is at least internally plausible for a demo."""
     if service_trend_bias == "declining":
         recent_bias = ["Negative", "Negative", "Neutral", "Positive"]
@@ -108,7 +108,7 @@ def _generate_customer_feedback(service_trend_bias: str) -> dict:
         recent_bias = ["Positive", "Positive", "Neutral"]
     else:
         recent_bias = ["Positive", "Neutral", "Neutral", "Negative"]
-    historical_bias = ["Positive", "Neutral", "Neutral", "Negative"]  # less skewed \u2014 baseline
+    historical_bias = ["Positive", "Neutral", "Neutral", "Negative"]  # less skewed - baseline
 
     recent = _generate_feedback_entries(random.randint(2, 5), 1, 365, recent_bias)
     historical = _generate_feedback_entries(random.randint(1, 3), 366, 900, historical_bias) if random.random() < 0.75 else []
@@ -142,7 +142,7 @@ def generate_contracts() -> list[dict]:
     seq = 1
     cust_seq = 1
     name_idx = 0
-    region_counts = {"NATT":35, "ETT": 30, "APAC_TT": 30}  # customer counts per region
+    region_counts = {"NATT":3, "ETT": 1, "APAC_TT": 1}  # customer counts per region
     eq_types = list(PRODUCT_CATALOG.keys())
 
     for region_id, customer_count in region_counts.items():
@@ -205,7 +205,7 @@ def generate_contracts() -> list[dict]:
                     "riskScore": None,
                     "riskFactors": None,
                     "segment": None,
-                    # Rule-based, not from an agent — top 3 service issues by
+                    # Rule-based, not from an agent - top 3 service issues by
                     # severity/SLA performance, shown as "reason for loss" in
                     # the UI. Only meaningful (and only computed) for Lost contracts.
                     "lostReasons": top_loss_reasons(service_tickets) if bucket == "Lost" else None,
@@ -227,14 +227,14 @@ def generate_contracts() -> list[dict]:
 
 
 class AppState:
-    """Single in-process store. Not thread-safe by design — this runs on
+    """Single in-process store. Not thread-safe by design - this runs on
     asyncio's single event loop, which is sufficient for a POC."""
 
     def __init__(self):
         self.contracts: list[dict] = generate_contracts()
         self.trace: list[dict] = []
         self.batch_status: dict = {"running": False, "done": 0, "total": 0, "lastError": None}
-        # Pre-computed, cached-on-demand agents — keyed by id, not tied to a
+        # Pre-computed, cached-on-demand agents - keyed by id, not tied to a
         # milestone run, per the "runs beforehand" design.
         self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
         self.customer_summaries: dict = {}  # customerId -> {status, data, error}

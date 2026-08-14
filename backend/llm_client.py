@@ -19,7 +19,7 @@ class LLMError(Exception):
 def _clean_json(raw: str) -> dict | None:
     # Reasoning models (Qwen3-Instruct and similar served through vLLM) emit
     # a <think>...</think> block ahead of the actual answer even when told to
-    # respond with only JSON — that instruction governs the final answer, not
+    # respond with only JSON - that instruction governs the final answer, not
     # the reasoning trace. Strip it before attempting to parse.
     without_think = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
     cleaned = re.sub(r"```json|```", "", without_think).strip()
@@ -62,7 +62,7 @@ async def call_llm(prompt_text: str) -> dict:
     latency_ms = round((time.perf_counter() - started) * 1000)
     if not raw:
         raise LLMError(
-            "LLM response had no text content — check VLLM_MODEL exactly matches "
+            "LLM response had no text content - check VLLM_MODEL exactly matches "
             "the model vLLM was launched with, or check your API key for the selected provider."
         )
 
@@ -110,7 +110,7 @@ async def _call_openrouter(prompt_text: str) -> tuple[str, int, int]:
     model = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.6")
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    # Optional but recommended by OpenRouter for their analytics/leaderboards —
+    # Optional but recommended by OpenRouter for their analytics/leaderboards -
     # harmless to omit, so only sent if set.
     if os.environ.get("OPENROUTER_SITE_URL"):
         headers["HTTP-Referer"] = os.environ["OPENROUTER_SITE_URL"]
@@ -142,7 +142,7 @@ async def _call_vllm(prompt_text: str) -> tuple[str, int, int]:
     base_url = os.environ.get("VLLM_BASE_URL", "http://localhost:8001")
     model = os.environ.get("VLLM_MODEL", "")
     if not model:
-        raise LLMError("VLLM_MODEL is not set in .env — set it to the model name you launched vLLM with.")
+        raise LLMError("VLLM_MODEL is not set in .env - set it to the model name you launched vLLM with.")
     api_key = os.environ.get("VLLM_API_KEY", "not-needed")
 
     async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
@@ -166,7 +166,7 @@ async def _call_vllm(prompt_text: str) -> tuple[str, int, int]:
 
 def remove_think(text: str) -> str:
     """Strip a reasoning model's <think>...</think> block from plain-text
-    (non-JSON) agent output — the Ticket Summary and Customer Summary agents
+    (non-JSON) agent output - the Ticket Summary and Customer Summary agents
     return prose, not JSON, so they never went through _clean_json's think-
     stripping. Without this, a reasoning model's raw thinking would show up
     in the cached summary shown to reps."""

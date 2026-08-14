@@ -1,5 +1,5 @@
 """
-Rule-based logic — deliberately kept separate from agents.py (which holds
+Rule-based logic - deliberately kept separate from agents.py (which holds
 LLM calls). Nothing in this file makes a network call; everything here is
 deterministic and instant, which is what a risk score and a segmentation
 label need to be.
@@ -46,7 +46,7 @@ def top_loss_reasons(tickets: list[dict], limit: int = 3) -> list[str]:
     """Rule-based (no LLM call) prioritization of a lost contract's service
     history into a short, explainable 'reason for loss' list. Scores each
     distinct issue by severity and SLA performance, then returns the top N
-    issue descriptions by aggregate score \u2014 ties broken by most recent date.
+    issue descriptions by aggregate score - ties broken by most recent date.
     Deliberately deterministic, matching the same design principle as the
     risk scorecard: instant and explainable rather than LLM-generated."""
     if not tickets:
@@ -77,7 +77,7 @@ PRODUCT_CATALOG = {
         "upgradePath": "Telematics-enabled reefer unit with remote temperature monitoring",
         "warranty": True,
     },
-    "Cab HVAC System": {
+    "Cab Trailer System": {
         "model": "CabComfort CC-200",
         "priceUsd": 6500,
         "lifeYears": 8,
@@ -169,7 +169,7 @@ def compute_risk(contract: dict) -> tuple[int, dict]:
 
 
 def compute_segment(risk_score: int, margin: float, median_margin: float) -> str:
-    """Risk crossed with value — a high-risk, high-margin account is a very
+    """Risk crossed with value - a high-risk, high-margin account is a very
     different priority than a high-risk, low-margin one."""
     above_median = margin > median_margin
     if (math.ceil(risk_score) >= 70) or (math.ceil(risk_score)>=50 and above_median):
@@ -203,7 +203,7 @@ MODEL_INFO = {
         "description": (
             "Given a customer-contract's service, financial, and engagement data, this model "
             "produces a 0-100 risk score and a ranked list of driver features explaining why. "
-            "It is a deterministic weighted scorecard, not a trained ML model — no training data "
+            "It is a deterministic weighted scorecard, not a trained ML model - no training data "
             "or model-fitting step is involved. This keeps it fully explainable and instant to "
             "compute, at the cost of not learning patterns beyond what the weights encode."
         ),

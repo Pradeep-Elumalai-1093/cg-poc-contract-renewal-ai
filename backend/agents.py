@@ -3,7 +3,7 @@ Agent graph: aggregator -> recommendation agent -> evaluation agent ->
 (retry up to MAX_RETRIES | pass | escalate) -> content agent.
 
 Two additional agents (ticket summary, customer summary) are NOT part of
-this per-milestone graph — they run on demand, cached by contract/customer
+this per-milestone graph - they run on demand, cached by contract/customer
 id, and their cached output (if present) is fed into the aggregator context
 here. This keeps their cost out of the daily batch entirely.
 """
@@ -59,8 +59,8 @@ def build_aggregator_context(
 
 def _condense_feedback(contract: dict) -> dict:
     """Trims raw feedback entries down to what the recommendation/content
-    prompts actually need \u2014 sentiment, category, and the verbatim comment
-    (the part that makes a reply feel personalized) \u2014 plus a one-word trend
+    prompts actually need - sentiment, category, and the verbatim comment
+    (the part that makes a reply feel personalized) - plus a one-word trend
     and a lightweight historical summary, rather than the full dated record."""
     feedback = contract.get("customerFeedback") or {"recent12Months": [], "historical": []}
     recent = feedback.get("recent12Months", [])
@@ -83,12 +83,12 @@ def recommendation_prompt(ctx: dict, prior_feedback: str | None) -> str:
     feedback_line = f"Your previous attempt was rejected by QA for this reason, revise accordingly: {prior_feedback}" if prior_feedback else ""
     catalog = ctx.get("product_catalog_entry") or {}
     upgrade_path = catalog.get("upgradePath", "none available")
-    return f"""You are the Deal Guidance Agent for a B2B truck/trailer HVAC service contract renewal system.
+    return f"""You are the Deal Guidance Agent for a B2B truck/trailer service contract renewal system.
 Choose exactly ONE retention action from this taxonomy: {taxonomy_names}.
 If channel is "Dealer", execution_owner must be "Dealer". If channel is "Direct", execution_owner must be "Direct Sales Rep".
 Do not repeat an action that was already tried at a prior milestone for this same contract if it did not work.
 Use the ticket_summary and customer_summary in the context (if present) to ground your rationale in the account's actual history, not just the raw numbers.
-The context also includes customer_feedback (recent_12_months verbatim comments, a sentiment trend, and a historical_summary) \u2014 this is customer sentiment data, separate from any QA retry feedback below. If a customer explicitly praised or complained about something specific, let that shape your rationale naturally rather than writing something generic \u2014 e.g. don't recommend a pricing conversation if their recent feedback was specifically about responsiveness.
+The context also includes customer_feedback (recent_12_months verbatim comments, a sentiment trend, and a historical_summary) - this is customer sentiment data, separate from any QA retry feedback below. If a customer explicitly praised or complained about something specific, let that shape your rationale naturally rather than writing something generic - e.g. don't recommend a pricing conversation if their recent feedback was specifically about responsiveness.
 Only if genuinely relevant to the equipment and risk profile, suggest ONE upsell tied to this product catalog upgrade path: "{upgrade_path}". If it doesn't fit, say so plainly rather than forcing one.
 {feedback_line}
 
@@ -122,41 +122,41 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
 def content_prompt(ctx: dict, recommendation: dict) -> str:
     if ctx["channel"] == "Direct":
         recipient_guidance = (
-            'This is a "Direct" channel customer — the email is addressed directly to the fleet operator/customer contact. '
+            'This is a "Direct" channel customer - the email is addressed directly to the fleet operator/customer contact. '
             'recipient_role should be "Customer".'
         )
-        contact_email = "d2d@cst.com"
+        contact_email = "d2d@carrier.com"
     else:
         recipient_guidance = (
-            'This is a "Dealer" channel customer — the sales rep does not have a direct relationship with the end customer. '
+            'This is a "Dealer" channel customer - the sales rep does not have a direct relationship with the end customer. '
             'The email is addressed to the dealer contact, asking them to reach out to their end customer with this recommendation. '
             'recipient_role should be "Dealer".'
         )
-        contact_email = "dealer@cst.com"
+        contact_email = "dealer@carrier.com"
     terms = ctx.get("suggested_renewal_terms", {})
     feedback = ctx.get("customer_feedback", {})
     recent_comments = feedback.get("recent_12_months", [])
     feedback_guidance = (
-        "The context includes customer_feedback.recent_12_months \u2014 actual verbatim comments from this customer. "
+        "The context includes customer_feedback.recent_12_months - actual verbatim comments from this customer. "
         "Weave in a natural acknowledgment of the most relevant one if it fits (e.g. thank them for positive feedback, "
         "or acknowledge a specific complaint before pivoting to the offer) so the email reads as written for this "
-        "customer specifically, not a template. Don't quote a comment word-for-word or reference the survey mechanics \u2014 "
+        "customer specifically, not a template. Don't quote a comment word-for-word or reference the survey mechanics - "
         "paraphrase naturally, the way a rep who actually read the feedback would."
         if recent_comments else
-        "No recent customer feedback is on record for this contract \u2014 don't reference feedback that doesn't exist."
+        "No recent customer feedback is on record for this contract - don't reference feedback that doesn't exist."
     )
     return f"""You are the Renewal Document Agent, drafting outreach content for a sales rep based on an approved retention recommendation.
 {recipient_guidance}
 Reference the suggested renewal terms naturally in the email: a {terms.get('priceMovePct', 0)}% price move and a {terms.get('term', '12-month')} term.
 {feedback_guidance}
-Keep the email concise (under 150 words), professional, and specific to this contract — reference real details from the context, do not invent any.
+Keep the email concise (under 150 words), professional, and specific to this contract - reference real details from the context, do not invent any.
 Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
 Structure email_body as exactly five parts, in this order, separated by blank lines:
 1. A greeting: "Hi {ctx.get('customer_name', 'there')}," on its own line.
 2. One opening sentence establishing why you're reaching out, grounded in the context.
-3. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep — ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. the renewal terms to propose, a feedback acknowledgment, or the upsell if relevant. Do not use numbered lists or markdown headers.
+3. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep - ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. the renewal terms to propose, a feedback acknowledgment, or the upsell if relevant. Do not use numbered lists or markdown headers.
 4. One closing sentence inviting a reply or next step.
-5. A sign-off formatted as exactly two lines: "Thank you," then, on the next line, this contact email for any follow-up: {contact_email}. Use exactly this address — do not invent or alter it.
+5. A sign-off formatted as exactly two lines: "Thank you," then, on the next line, this contact email for any follow-up: {contact_email}. Use exactly this address - do not invent or alter it.
 
 Context:
 {json.dumps(ctx, indent=2)}
@@ -165,7 +165,7 @@ Approved recommendation:
 {json.dumps(recommendation, indent=2)}
 
 Respond with ONLY valid JSON, no markdown fences, no preamble:
-{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<'Hi <customer_name>,' greeting, blank line, opening sentence, blank line, '- ' bulleted priority-ordered points, blank line, closing sentence, blank line, 'Thank you,' then {contact_email} on the next line \u2014 plain text, no markdown headers>"}}"""
+{{"summary": "<2-3 sentence internal summary of this customer situation for the rep, not customer-facing>", "recipient_role": "Customer or Dealer", "email_subject": "<short subject line>", "email_body": "<'Hi <customer_name>,' greeting, blank line, opening sentence, blank line, '- ' bulleted priority-ordered points, blank line, closing sentence, blank line, 'Thank you,' then {contact_email} on the next line - plain text, no markdown headers>"}}"""
 
 
 def ticket_summary_prompt(contract: dict) -> str:
@@ -177,7 +177,7 @@ Equipment: {contract['equipment']['type']}, {contract['equipment']['count']} uni
 Service tickets (JSON, most recent first):
 {json.dumps(tickets, indent=2)}
 
-Respond with plain text only — the summary itself, nothing else."""
+Respond with plain text only - the summary itself, nothing else."""
 
 
 def customer_summary_prompt(customer_id: str, customer_name: str, contracts: list[dict]) -> str:
@@ -200,7 +200,7 @@ Customer: {customer_name} ({customer_id}), {len(contracts)} contract(s).
 Contracts (JSON):
 {json.dumps(summary_input, indent=2)}
 
-Respond with plain text only — the summary itself, nothing else."""
+Respond with plain text only - the summary itself, nothing else."""
 
 
 async def run_ticket_summary_agent(contract: dict) -> dict:
@@ -356,13 +356,13 @@ async def run_agent_graph(
 
 
 def _build_suggested_actions(evaluation: dict | None) -> list[str]:
-    actions = ["Manually review the draft content below before sending \u2014 automated evaluation could not reach a passing score after the retry limit."]
+    actions = ["Manually review the draft content below before sending - automated evaluation could not reach a passing score after the retry limit."]
     scores = (evaluation or {}).get("scores", {})
     if float(scores.get("policy_compliance", 10) or 0) < POLICY_FLOOR:
-        actions.append("Check the recommended action against policy manually \u2014 the automated check flagged a compliance concern.")
+        actions.append("Check the recommended action against policy manually - the automated check flagged a compliance concern.")
     if float(scores.get("groundedness", 10) or 0) < 6:
         actions.append("Verify the rationale against the customer's actual contract data before relying on it.")
     if float(scores.get("actionability", 10) or 0) < 6:
-        actions.append("Add concrete next steps yourself \u2014 the recommendation may be too vague to act on directly.")
+        actions.append("Add concrete next steps yourself - the recommendation may be too vague to act on directly.")
     actions.append("If still uncertain, escalate to the account manager per the standard action taxonomy.")
     return actions
