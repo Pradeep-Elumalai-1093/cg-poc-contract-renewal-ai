@@ -44,9 +44,9 @@
 <div class="page">
 
   <header>
-    <div class="eyebrow">Carrier Global &mdash; CST &mdash; Proactive Contract Renewal</div>
+    <div class="eyebrow">Carrier Global - CST - Proactive Contract Renewal</div>
     <h1>Architecture &amp; Data Model</h1>
-    <p>Seven views of the same system: the business process end to end, the complete data pipeline from source systems to the dashboard, the connected data model, the daily batch lifecycle, all five agents in one diagram with the retry loop, the FastAPI function-level flow with the LLM boundary marked, and how the frontend/backend/LLM modules fit together. Every diagram's boxes are draggable to rearrange for a presentation. Self-contained &mdash; no CDN, works offline.</p>
+    <p>Seven views of the same system: the business process end to end, the complete data pipeline from source systems to the dashboard, the connected data model, the daily batch lifecycle, all five agents in one diagram with the retry loop, the FastAPI function-level flow with the LLM boundary marked, and how the frontend/backend/LLM modules fit together. Every diagram's boxes are draggable to rearrange for a presentation. Self-contained - no CDN, works offline.</p>
     <nav>
       <a href="#business">1. Business flow</a>
       <a href="#system">2. System design</a>
@@ -72,7 +72,7 @@
 
   <section id="business">
     <h2>1. Business process flow</h2>
-    <p class="section-sub">Who does what, from an active contract through to a renewed, renegotiated, or lost outcome. The AI System lane is deliberately collapsed to one block &mdash; see section 5 for the detailed agent mechanics.</p>
+    <p class="section-sub">Who does what, from an active contract through to a renewed, renegotiated, or lost outcome. The AI System lane is deliberately collapsed to one block - see section 5 for the detailed agent mechanics.</p>
     <div class="drag-hint">&#8597; Drag any box to rearrange</div>
     <div class="card" style="padding: 20px;">
       <svg viewBox="0 0 1420 480" role="img">
@@ -156,12 +156,12 @@
         </g>
       </svg>
     </div>
-    <p class="diagram-note">The daily batch job runs every day, but a given contract-milestone is only processed once &mdash; the next run only fires when the contract crosses into a new threshold (e.g. 90&rarr;60 days), not on every daily run. The feedback loop (dashed amber/red) is a fixed path and does not follow drag movement.</p>
+    <p class="diagram-note">The daily batch job runs every day, but a given contract-milestone is only processed once - the next run only fires when the contract crosses into a new threshold (e.g. 90&rarr;60 days), not on every daily run. The feedback loop (dashed amber/red) is a fixed path and does not follow drag movement.</p>
   </section>
 
   <section id="system">
-    <h2>2. Complete system design &mdash; data sources to end product</h2>
-    <p class="section-sub">Solid, colored layers are built in this POC. Dashed gray layers are production targets &mdash; not connected today, since the POC runs entirely on synthetic, in-memory data (see Assumptions).</p>
+    <h2>2. Complete system design - data sources to end product</h2>
+    <p class="section-sub">Solid, colored layers are built in this POC. Dashed gray layers are production targets - not connected today, since the POC runs entirely on synthetic, in-memory data (see Assumptions).</p>
     <div class="drag-hint">&#8597; Drag any box to rearrange</div>
     <div class="card" style="padding: 20px;">
       <svg viewBox="0 0 1240 820" role="img">
@@ -226,46 +226,46 @@
 
         <g class="draggable-node" id="sd-ingest" data-tx="0,0" transform="translate(0,0)">
           <rect x="100" y="140" width="1040" height="70" rx="8" fill="#F6F7F9" stroke="#B4B2A9" stroke-dasharray="4 3"/>
-          <text x="620" y="168" text-anchor="middle" font-size="13.5" font-weight="700" fill="#5B6472">Ingestion / Integration Layer &mdash; production target, not built</text>
-          <text x="620" y="188" text-anchor="middle" font-size="11" fill="#8A93A3">APIs, ETL, sync jobs &mdash; no live connections exist today</text>
+          <text x="620" y="168" text-anchor="middle" font-size="13.5" font-weight="700" fill="#5B6472">Ingestion / Integration Layer - production target, not built</text>
+          <text x="620" y="188" text-anchor="middle" font-size="11" fill="#8A93A3">APIs, ETL, sync jobs - no live connections exist today</text>
         </g>
         <g class="draggable-node" id="sd-store" data-tx="0,0" transform="translate(0,0)">
           <rect x="350" y="250" width="540" height="70" rx="8" fill="#F6F7F9" stroke="#B4B2A9" stroke-dasharray="4 3"/>
-          <text x="620" y="278" text-anchor="middle" font-size="13.5" font-weight="700" fill="#5B6472">Data Store &mdash; production target, not built</text>
+          <text x="620" y="278" text-anchor="middle" font-size="13.5" font-weight="700" fill="#5B6472">Data Store - production target, not built</text>
           <text x="620" y="298" text-anchor="middle" font-size="11" fill="#8A93A3">Real database; POC uses in-memory only</text>
         </g>
 
         <!-- Built layers -->
         <g class="draggable-node" id="sd-processing" data-tx="0,0" transform="translate(0,0)">
           <rect x="350" y="360" width="540" height="80" rx="8" fill="#F7EFE1" stroke="#B8863B"/>
-          <text x="620" y="386" text-anchor="middle" font-size="14" font-weight="700" fill="#5A4416">Processing Layer &mdash; built</text>
-          <text x="620" y="406" text-anchor="middle" font-size="11.5" fill="#8A6620">rules.py &mdash; risk scoring, segmentation, renewal terms</text>
+          <text x="620" y="386" text-anchor="middle" font-size="14" font-weight="700" fill="#5A4416">Processing Layer - built</text>
+          <text x="620" y="406" text-anchor="middle" font-size="11.5" fill="#8A6620">rules.py - risk scoring, segmentation, renewal terms</text>
           <text x="620" y="422" text-anchor="middle" font-size="10.5" fill="#8A6620" font-style="italic">rule-based, no LLM call</text>
         </g>
         <g class="draggable-node" id="sd-ai" data-tx="0,0" transform="translate(0,0)">
           <rect x="350" y="470" width="540" height="80" rx="8" fill="#EEEDFE" stroke="#7F77DD"/>
-          <text x="620" y="496" text-anchor="middle" font-size="14" font-weight="700" fill="#26215C">AI Agent Layer &mdash; built</text>
-          <text x="620" y="516" text-anchor="middle" font-size="11.5" fill="#3C3489">5 agents &mdash; see Agent Graph, section 5</text>
+          <text x="620" y="496" text-anchor="middle" font-size="14" font-weight="700" fill="#26215C">AI Agent Layer - built</text>
+          <text x="620" y="516" text-anchor="middle" font-size="11.5" fill="#3C3489">5 agents - see Agent Graph, section 5</text>
           <text x="620" y="532" text-anchor="middle" font-size="10.5" fill="#3C3489" font-style="italic">recommendation, evaluation, content, + 2 summary agents</text>
         </g>
         <g class="draggable-node" id="sd-api" data-tx="0,0" transform="translate(0,0)">
           <rect x="350" y="580" width="540" height="70" rx="8" fill="#F1EFE8" stroke="#B4B2A9"/>
-          <text x="620" y="608" text-anchor="middle" font-size="14" font-weight="700" fill="#2C2C2A">Application / API Layer &mdash; built</text>
-          <text x="620" y="628" text-anchor="middle" font-size="11.5" fill="#5F5E5A">FastAPI backend &mdash; REST endpoints, in-memory state</text>
+          <text x="620" y="608" text-anchor="middle" font-size="14" font-weight="700" fill="#2C2C2A">Application / API Layer - built</text>
+          <text x="620" y="628" text-anchor="middle" font-size="11.5" fill="#5F5E5A">FastAPI backend - REST endpoints, in-memory state</text>
         </g>
         <g class="draggable-node" id="sd-presentation" data-tx="0,0" transform="translate(0,0)">
           <rect x="350" y="680" width="540" height="80" rx="8" fill="#E1F5EE" stroke="#5DCAA5"/>
-          <text x="620" y="706" text-anchor="middle" font-size="14" font-weight="700" fill="#04342C">Presentation Layer &mdash; built, the end product</text>
-          <text x="620" y="726" text-anchor="middle" font-size="11.5" fill="#085041">React dashboard &mdash; renewal worklist, agent</text>
+          <text x="620" y="706" text-anchor="middle" font-size="14" font-weight="700" fill="#04342C">Presentation Layer - built, the end product</text>
+          <text x="620" y="726" text-anchor="middle" font-size="11.5" fill="#085041">React dashboard - renewal worklist, agent</text>
           <text x="620" y="742" text-anchor="middle" font-size="11.5" fill="#085041">traceability, campaign tracking</text>
         </g>
       </svg>
     </div>
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:14px; font-size:11.5px; color:var(--ink-muted);">
       <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#F6F7F9;border:1px dashed #B4B2A9;display:inline-block;"></span>Production target, not built</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#F7EFE1;border:1px solid #B8863B;display:inline-block;"></span>Built &mdash; rule-based</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#EEEDFE;border:1px solid #7F77DD;display:inline-block;"></span>Built &mdash; AI agents</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#E1F5EE;border:1px solid #5DCAA5;display:inline-block;"></span>Built &mdash; end product</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#F7EFE1;border:1px solid #B8863B;display:inline-block;"></span>Built - rule-based</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#EEEDFE;border:1px solid #7F77DD;display:inline-block;"></span>Built - AI agents</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:9px;border-radius:2px;background:#E1F5EE;border:1px solid #5DCAA5;display:inline-block;"></span>Built - end product</span>
     </div>
   </section>
 
@@ -376,7 +376,7 @@
   </section>
 
   <section id="flow">
-    <h2>4. Application flow &mdash; daily batch run</h2>
+    <h2>4. Application flow - daily batch run</h2>
     <p class="section-sub">What happens end to end when the daily batch is triggered. The "agent graph" step is expanded into its own detailed diagram in section 5.</p>
     <div class="drag-hint">&#8597; Drag any box to rearrange</div>
     <div class="card" style="padding: 20px;">
@@ -424,7 +424,7 @@
   </section>
 
   <section id="agents">
-    <h2>5. Agent graph &mdash; all five agents, one diagram</h2>
+    <h2>5. Agent graph - all five agents, one diagram</h2>
     <p class="section-sub">Two agents run independently ahead of time, cached by id, and merge into one aggregated context. The other three run sequentially per milestone, with a retry loop between recommendation and evaluation.</p>
     <div class="drag-hint">&#8597; Drag any box to rearrange</div>
     <div class="card" style="padding: 20px;">
@@ -484,7 +484,7 @@
         </g>
       </svg>
     </div>
-    <p class="diagram-note">The retry-loop connector (red) is a fixed path and does not follow drag movement, since it's a 3-segment elbow, not a straight line &mdash; rearranging the other connectors updates live.</p>
+    <p class="diagram-note">The retry-loop connector (red) is a fixed path and does not follow drag movement, since it's a 3-segment elbow, not a straight line - rearranging the other connectors updates live.</p>
   </section>
 
   <section id="backend">
@@ -561,12 +561,12 @@
         </g>
       </svg>
     </div>
-    <p class="diagram-note">The amber box is deliberately separated from the main chain: it's rule-based, instant, and involves no LLM call &mdash; the dashed line marks that distinction.</p>
+    <p class="diagram-note">The amber box is deliberately separated from the main chain: it's rule-based, instant, and involves no LLM call - the dashed line marks that distinction.</p>
   </section>
 
   <section id="arch">
     <h2>7. Module architecture</h2>
-    <p class="section-sub">How the React frontend, FastAPI backend, and the swappable LLM provider connect at a system level. Region and channel are configuration, not forked code &mdash; one engine serves NATT, ETT, and APAC TT.</p>
+    <p class="section-sub">How the React frontend, FastAPI backend, and the swappable LLM provider connect at a system level. Region and channel are configuration, not forked code - one engine serves NATT, ETT, and APAC TT.</p>
     <div class="drag-hint">&#8597; Drag any box to rearrange</div>
     <div class="card" style="padding: 20px;">
       <svg viewBox="0 0 700 300" role="img">
@@ -592,10 +592,10 @@
         <g class="draggable-node" id="ma-backend" data-tx="0,0" transform="translate(0,0)">
           <rect x="310" y="90" width="200" height="140" rx="12" fill="#EEEDFE" stroke="#7F77DD"/>
           <text x="410" y="112" text-anchor="middle" font-size="14" font-weight="600" fill="#26215C">FastAPI backend</text>
-          <text x="410" y="132" text-anchor="middle" font-size="12" fill="#3C3489">state.py &mdash; in-memory data</text>
-          <text x="410" y="148" text-anchor="middle" font-size="12" fill="#3C3489">rules.py &mdash; risk, segment,</text>
+          <text x="410" y="132" text-anchor="middle" font-size="12" fill="#3C3489">state.py - in-memory data</text>
+          <text x="410" y="148" text-anchor="middle" font-size="12" fill="#3C3489">rules.py - risk, segment,</text>
           <text x="410" y="162" text-anchor="middle" font-size="12" fill="#3C3489">renewal terms</text>
-          <text x="410" y="180" text-anchor="middle" font-size="12" fill="#3C3489">agents.py &mdash; LLM calls</text>
+          <text x="410" y="180" text-anchor="middle" font-size="12" fill="#3C3489">agents.py - LLM calls</text>
         </g>
         <g class="draggable-node" id="ma-llm" data-tx="0,0" transform="translate(0,0)">
           <rect x="600" y="140" width="80" height="60" rx="8" fill="#FAECE7" stroke="#F0997B"/>
@@ -607,7 +607,7 @@
   </section>
 
   <footer>
-    Generated for the Climate Solutions Transportation contract renewal proof of concept. All sections are self-contained SVG/HTML/JS &mdash; no CDN, no JavaScript framework, no internet connection required to view or interact with.
+    Generated for the Climate Solutions Transportation contract renewal proof of concept. All sections are self-contained SVG/HTML/JS - no CDN, no JavaScript framework, no internet connection required to view or interact with.
   </footer>
 
 </div>

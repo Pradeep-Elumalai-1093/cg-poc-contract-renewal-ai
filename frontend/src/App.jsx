@@ -1407,7 +1407,7 @@ export default function ContractRenewalPOC() {
           </div>
         </div>
 
-        <div style={{ textAlign: "right" }}>
+        {/* <div style={{ textAlign: "right" }}>
           <button
             onClick={runBatch}
             disabled={running || dueContracts.length === 0}
@@ -1421,7 +1421,7 @@ export default function ContractRenewalPOC() {
             {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
-        </div>
+        </div> */}
           
       </div>
 
@@ -1445,10 +1445,9 @@ export default function ContractRenewalPOC() {
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>The problem</div>
             <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
-              climate solutions transportation (CST) renews thousands of service contracts every year. Today, that
-              process is reactive: an at-risk account is usually noticed only after the contract has already lapsed
-              &mdash; or not noticed at all. The signals that would have predicted the loss (a slipping SLA, a late
-              payment, a cooling NPS score, a competitor circling) exist somewhere in the business, but nothing pulls
+              Climate Solutions Transportation (CST) renews thousands of service contracts every year.
+              Today, that process is reactive: an at-risk account is usually noticed only after the contract has already lapsed or not noticed at all.
+              The signals that would have predicted the loss (a slipping SLA, a late payment, a cooling NPS score, a competitor circling) exist somewhere in the business, but nothing pulls
               them together in time for a rep to act. And when a rep does spot a risk, there's no consistent playbook
               for what to do next, so the response depends entirely on that one person's judgment and available time.
             </p>
@@ -1456,7 +1455,7 @@ export default function ContractRenewalPOC() {
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Why we need this solution</div>
             <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
               Manually reviewing thousands of contracts for renewal risk doesn't scale, and it doesn't happen
-              consistently &mdash; different reps and different regions develop different habits. Contracts renew on
+              consistently - different reps and different regions develop different habits. Contracts renew on
               autopilot until the moment they don't, and by the time a churn shows up in the numbers, the account is
               already gone. Without a system that checks every contract on a fixed clock, scores risk the same way
               everywhere, and hands a rep a specific next step, retention is left to chance rather than to a process.
@@ -1464,20 +1463,20 @@ export default function ContractRenewalPOC() {
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How the business benefits</div>
             <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 10px" }}>
-              This isn't a contract renewal <i>prediction</i> tool &mdash; the difference is what happens after the
+              This isn't a contract renewal <i>prediction</i> tool - the difference is what happens after the
               number. It's a proactive renewal system that:
             </p>
             <ol style={{ fontSize: 13.5, lineHeight: 1.75, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
-              <li><b>Identifies upcoming renewal risk</b> &mdash; every contract is checked automatically against its renewal milestones, so risk surfaces weeks before a contract could lapse, not after.</li>
-              <li><b>Prioritizes accounts by business value</b> &mdash; risk alone isn't the whole story; a high-risk, high-margin account is a very different priority than a high-risk, low-margin one, so accounts are ranked by risk crossed with value, not risk in isolation.</li>
-              <li><b>Recommends an action to retain the customer</b> &mdash; each flagged account gets one concrete, grounded retention action, not just a "high risk" label.</li>
-              <li><b>Generates the outreach content</b> &mdash; the actual email a rep can send is drafted for them, referencing this specific customer's real history, so there's no blank page between "risk found" and "customer contacted."</li>
-              <li><b>Tracks the outcome</b> &mdash; every recommendation and its real-world result (engaged, declined, no response) is logged, so the business can see which actions actually retain customers, not just how many were sent.</li>
+              <li><b>Identifies upcoming renewal risk</b> - every contract is checked automatically against its renewal milestones, so risk surfaces weeks before a contract could lapse, not after.</li>
+              <li><b>Prioritizes accounts by business value</b> - risk alone isn't the whole story; a high-risk, high-margin account is a very different priority than a high-risk, low-margin one, so accounts are ranked by risk crossed with value, not risk in isolation.</li>
+              <li><b>Recommends an action to retain the customer</b> - each flagged account gets one concrete, grounded retention action, not just a "high risk" label.</li>
+              <li><b>Generates the outreach content</b> - the actual email a rep can send is drafted for them, referencing this specific customer's real history, so there's no blank page between "risk found" and "customer contacted."</li>
+              <li><b>Tracks the outcome</b> - every recommendation and its real-world result (engaged, declined, no response) is logged, so the business can see which actions actually retain customers, not just how many were sent.</li>
             </ol>
 
             <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted, fontStyle: "italic" }}>
-              For how this is actually built &mdash; the agent pipeline, the scoring model, current state, and the
-              assumptions behind it &mdash; see the Technical Details tab.
+              For how this is actually built - the agent pipeline, the scoring model, current state, and the
+              assumptions behind it - see the Technical Details tab.
             </div>
             
           </Card>
@@ -1495,12 +1494,12 @@ export default function ContractRenewalPOC() {
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How we're achieving it</div>
             <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
-              <li><b>Rule-based risk scorecard</b> &mdash; 11 weighted factors (SLA breaches, payment behavior, NPS, competitor activity, and more) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product.</li>
-              <li><b>Risk &times; value Segmentation</b> &mdash; crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
-              <li><b>Six-agent pipeline</b> &mdash; Service Ticket Summary, Customer Summary & Customer Feedback Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
-              <li><b>Full traceability</b> &mdash; every recommendation logs its prompts, scores, retries, latency, and token cost, inspectable end to end.</li>
-              <li><b>Swappable LLM provider</b> &mdash; Claude API or a locally-hosted vLLM model, switched with one configuration change.</li>
-              <li><b>One engine, three regions</b> &mdash; NATT, ETT, and APAC TT run on the same pipeline; region and channel are configuration, not forked code.</li>
+              <li><b>Rule-based risk scorecard</b> - 11 weighted factors (SLA breaches, payment behavior, NPS, competitor activity, and more) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product.</li>
+              <li><b>Risk &times; value Segmentation</b> - crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
+              <li><b>Six-agent pipeline</b> - Service Ticket Summary, Customer Summary & Customer Feedback Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
+              <li><b>Full traceability</b> - every recommendation logs its prompts, scores, retries, latency, and token cost, inspectable end to end.</li>
+              <li><b>Swappable LLM provider</b> - Claude API or a locally-hosted vLLM model, switched with one configuration change.</li>
+              <li><b>One engine, three regions</b> - NATT, ETT, and APAC TT run on the same pipeline; region and channel are configuration, not forked code.</li>
             </ul>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>Current state</div>
@@ -1533,7 +1532,7 @@ export default function ContractRenewalPOC() {
             </ul>
 
             <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, fontSize: 12, color: T.inkMuted, fontStyle: "italic" }}>
-              Status: proof of concept &mdash; synthetic data, rule-based scoring labeled honestly as such, real agentic pipeline.
+              Status: proof of concept - synthetic data, rule-based scoring labeled honestly as such, real agentic pipeline.
             </div>
           </Card>
         </div>
