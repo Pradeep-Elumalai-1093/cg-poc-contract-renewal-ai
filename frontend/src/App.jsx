@@ -1407,7 +1407,7 @@ export default function ContractRenewalPOC() {
           </div>
         </div>
 
-        {/* <div style={{ textAlign: "right" }}>
+        <div style={{ textAlign: "right" }}>
           <button
             onClick={runBatch}
             disabled={running || dueContracts.length === 0}
@@ -1421,7 +1421,7 @@ export default function ContractRenewalPOC() {
             {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
           </button>
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
-        </div> */}
+        </div>
           
       </div>
 
