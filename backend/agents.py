@@ -29,7 +29,6 @@ def build_aggregator_context(
     prior_trace: dict | None,
     ticket_summary: str | None,
     customer_summary: str | None,
-    suggested_terms: dict,
 ) -> dict:
     catalog_entry = PRODUCT_CATALOG.get(contract["equipment"]["type"])
     return {
@@ -40,15 +39,12 @@ def build_aggregator_context(
         "dealer_id": contract["dealerId"],
         "months_on_book": contract["monthsOnBook"],
         "contract_value_usd": contract["contractValue"],
-        "margin_usd": contract["margin"],
-        "payment_lag_days": contract["paymentLagDays"],
         "milestone": contract["bucket"],
         "risk_score": contract["riskScore"],
         "risk_factors": contract["riskFactors"],
         "segment": contract["segment"],
         "equipment": contract["equipment"],
         "product_catalog_entry": catalog_entry,
-        "suggested_renewal_terms": suggested_terms,
         "ticket_summary": ticket_summary or "Not yet generated.",
         "customer_summary": customer_summary or "Not yet generated.",
         "customer_feedback": _condense_feedback(contract),
@@ -133,7 +129,6 @@ def content_prompt(ctx: dict, recommendation: dict) -> str:
             'recipient_role should be "Dealer".'
         )
         contact_email = "dealer@carrier.com"
-    terms = ctx.get("suggested_renewal_terms", {})
     feedback = ctx.get("customer_feedback", {})
     recent_comments = feedback.get("recent_12_months", [])
     feedback_guidance = (
@@ -147,14 +142,14 @@ def content_prompt(ctx: dict, recommendation: dict) -> str:
     )
     return f"""You are the Renewal Document Agent, drafting outreach content for a sales rep based on an approved retention recommendation.
 {recipient_guidance}
-Reference the suggested renewal terms naturally in the email: a {terms.get('priceMovePct', 0)}% price move and a {terms.get('term', '12-month')} term.
+Do not propose, imply, or reference any specific price, discount percentage, or contract term - pricing and quote generation are handled entirely by the sales rep, never by this agent.
 {feedback_guidance}
 Keep the email concise (under 150 words), professional, and specific to this contract - reference real details from the context, do not invent any.
 Match tone to urgency: a >45-day milestone should read as a routine check-in; a <=30-day milestone should convey more urgency without being alarmist.
 Structure email_body as exactly five parts, in this order, separated by blank lines:
 1. A greeting: "Hi {ctx.get('customer_name', 'there')}," on its own line.
 2. One opening sentence establishing why you're reaching out, grounded in the context.
-3. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep - ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. the renewal terms to propose, a feedback acknowledgment, or the upsell if relevant. Do not use numbered lists or markdown headers.
+3. A bulleted list, each line starting with "- ", of concrete talking points/next steps for the rep - ordered from highest to lowest priority. The first bullet should be the core retention action itself (the approved recommendation); the following bullets are supporting points, e.g. a feedback acknowledgment or the upsell if relevant. Do not use numbered lists or markdown headers.
 4. One closing sentence inviting a reply or next step.
 5. A sign-off formatted as exactly two lines: "Thank you," then, on the next line, this contact email for any follow-up: {contact_email}. Use exactly this address - do not invent or alter it.
 
@@ -169,13 +164,13 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
 
 
 def ticket_summary_prompt(contract: dict) -> str:
-    tickets = contract.get("serviceTickets", [])
-    return f"""You are the Service Ticket Summary Agent. Given this customer-contract's service ticket history, write a concise 2-3 sentence summary covering: overall pattern (recurring issues, SLA performance), and anything notable an account manager should know before deciding on a retention action. Plain prose, no headers, no bullet points, no markdown.
+    claims = contract.get("claims", [])
+    return f"""You are the Service Ticket Summary Agent. Given this customer-contract's service claim history, write a concise 2-3 sentence summary covering: overall pattern (recurring faults, any jobs written off without resolution), and anything notable an account manager should know before deciding on a retention action. Plain prose, no headers, no bullet points, no markdown.
 
 Equipment: {contract['equipment']['type']}, {contract['equipment']['count']} units, average age {contract['equipment']['avgAgeYears']} years.
 
-Service tickets (JSON, most recent first):
-{json.dumps(tickets, indent=2)}
+Service claims (JSON, most recent first):
+{json.dumps(claims, indent=2)}
 
 Respond with plain text only - the summary itself, nothing else."""
 
@@ -187,7 +182,6 @@ def customer_summary_prompt(customer_id: str, customer_name: str, contracts: lis
         "channel": c["channel"],
         "months_on_book": c["monthsOnBook"],
         "contract_value_usd": c["contractValue"],
-        "margin_usd": c["margin"],
         "risk_score": c["riskScore"],
         "segment": c["segment"],
         "milestone": c["bucket"],
@@ -232,9 +226,8 @@ async def run_agent_graph(
     prior_trace: dict | None,
     ticket_summary: str | None,
     customer_summary: str | None,
-    suggested_terms: dict,
 ) -> dict:
-    ctx = build_aggregator_context(contract, prior_trace, ticket_summary, customer_summary, suggested_terms)
+    ctx = build_aggregator_context(contract, prior_trace, ticket_summary, customer_summary)
     retry_count = 0
     prior_feedback = None
     total_input_tokens = total_output_tokens = total_latency = 0
@@ -299,7 +292,7 @@ async def run_agent_graph(
             vals = [float(scores.get(k, 0) or 0) for k in EVAL_CRITERIA]
             composite = sum(vals) / len(vals)
             policy_ok = float(scores.get("policy_compliance", 0) or 0) >= POLICY_FLOOR
-            passed = policy_ok and composite >= z
+            passed = policy_ok and composite >= COMPOSITE_PASS
             evaluation["composite"] = round(composite, 1)
             evaluation["pass"] = passed
 

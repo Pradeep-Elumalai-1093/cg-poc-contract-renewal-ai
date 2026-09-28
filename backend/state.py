@@ -1,9 +1,24 @@
 """
 In-memory data layer. No database, per the POC design - everything lives in
 process memory and resets when the server restarts.
+
+v3 update: contract shape now mirrors confirmed real eCare fields (see
+contract_risk_score_v1.sql and the field-mapping spreadsheet), not the
+earlier synthetic 11-factor shape. Fields with no confirmed real source
+after multiple real data pulls (payment behavior, outstanding balance,
+competitor bid, NPS score, portal engagement, exec touchpoint gap,
+cost-to-serve/margin) have been REMOVED rather than kept as fabricated
+placeholders - generating fake data for a field that doesn't exist in
+production would silently break the moment real data replaces this file,
+in a way that's much harder to spot than a field simply not being here.
+
+Still synthetic: this generator produces demo data shaped like the real
+schema (real field names, real value ranges observed in the sample
+extracts), not a live Snowflake connection - swapping this module for a
+real loader is the next step, not done here.
 """
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 
 from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons, feedback_sentiment_trend
@@ -19,6 +34,9 @@ CAMPAIGN_TAXONOMY = [
     {"id": "escalate_am", "name": "Escalation to account manager"},
 ]
 
+# NATT/APAC_TT kept in the lookup for label/filter compatibility with the
+# frontend, but MVP focus is Europe only per client scope - see
+# region_counts below, which only generates ETT contracts.
 REGIONS = {
     "NATT": {"label": "North America Truck & Trailer", "channels": ["Dealer"]},
     "ETT": {"label": "Europe Truck & Trailer", "channels": ["Dealer", "Direct"]},
@@ -31,42 +49,41 @@ FLEET_NAMES = [
     "Kestrel Logistics", "Lattimer Transport", "Meridian Cold Freight", "Northgate Haulers", "Orchard Fleet Solutions",
     "Palisade Trucking", "Quarrystone Freight", "Ridgeway Logistics", "Sablewood Transport", "Thornfield Fleet",
     "Umberline Haulage", "Vantage Cold Chain", "Westmark Trucking", "Yarrow Freight Services", "Zephyr Logistics",
-    "Ashgrove Transit", "Briarcliff Freight", "Cedarline Haulers", "Dunmoor Logistics", "Elmscourt Fleet",
-    "Foxglen Transport", "Greywick Freight", "Hollowmere Trucking", "Ivywood Logistics", "Larkspur Fleet Corp",
-    "Millbrook Cold Chain", "Nettlewood Haulage",
 ]
 
-TICKET_TYPE_WEIGHTS = ["Preventive", "Preventive", "Corrective", "Corrective", "Emergency", "Inspection"]
-PRIORITY_BY_TYPE = {
-    "Emergency": ["Critical", "Critical", "High"],
-    "Corrective": ["High", "Medium", "Medium"],
-    "Preventive": ["Low"],
-    "Inspection": ["Low"],
-}
+# No real fault-repeat pool exists per equipment type yet (that crosswalk
+# still needs building against the real MODEL_CATEGORY/TYPE/GROUP fields) -
+# reusing the existing failure-mode text per equipment type as a stand-in,
+# tagged with a synthetic faultId so repeat-fault logic has something real
+# to compute against.
+def _generate_claims(eq_type: str, contract_start: date, today: date) -> list[dict]:
+    failure_modes = PRODUCT_CATALOG[eq_type]["failureModes"]
+    n_claims = random.randint(0, 12)  # real data showed contracts ranging from 0 to 10+ claims
+    claims = []
+    span_days = max(1, (today - contract_start).days)
+    for _ in range(n_claims):
+        days_ago = random.randint(0, min(span_days, 730))
+        fault_idx = random.randint(0, len(failure_modes) - 1)
+        claims.append({
+            "date": (today - timedelta(days=days_ago)).isoformat(),
+            "faultId": f"{eq_type[:3].upper()}-{fault_idx}",  # stand-in for a real FAULTID code
+            "issue": failure_modes[fault_idx],
+            "jobWrittenOff": random.random() < 0.12,
+        })
+    claims.sort(key=lambda c: c["date"], reverse=True)
+    return claims
 
-FEEDBACK_SOURCES = ["NPS Survey", "Post-Service Survey", "Account Review Call", "Renewal Conversation", "Support Ticket Follow-up"]
-FEEDBACK_POOL = {
-    "Positive": [
-        ("Service Quality", "Really happy with the response time on our last service call."),
-        ("Technician Expertise", "The technician was excellent and explained everything clearly."),
-        ("Account Relationship", "Appreciate the proactive check-ins from our account rep."),
-        ("Pricing", "Pricing feels fair for the level of service we get."),
-        ("Service Quality", "Great experience overall, would recommend to other fleet operators."),
-    ],
-    "Neutral": [
-        ("Service Quality", "Service was fine, nothing stood out either way."),
-        ("Account Relationship", "No complaints, but haven't seen much proactive outreach lately."),
-        ("Pricing", "Pricing is about what we expected, similar to our last vendor."),
-        ("Responsiveness", "Response time is acceptable, could be faster during peak season."),
-    ],
-    "Negative": [
-        ("Responsiveness", "Frustrated with how long it took to resolve our refrigeration issue."),
-        ("Pricing", "Feels like pricing has crept up without much explanation."),
-        ("Account Relationship", "Wish we heard from our rep more often - feels like an afterthought."),
-        ("Responsiveness", "Had to follow up multiple times to get a technician scheduled."),
-        ("Service Quality", "Considering other options given the recent service issues."),
-    ],
-}
+
+def _generate_invoice_trend(months_on_book: int) -> tuple[float, float, float]:
+    """Stand-in for INT_INVOICE's first-vs-latest installment amount.
+    Returns (monthly_amount, annual_contract_value, price_increase_pct)."""
+    first_amount = round(random.uniform(80, 1800), 2)
+    # Most contracts never see a price change; some do, mid-term.
+    had_increase = random.random() < 0.3
+    latest_amount = round(first_amount * random.uniform(1.05, 1.20), 2) if had_increase else first_amount
+    price_increase_pct = round((latest_amount - first_amount) / first_amount, 3) if first_amount else 0.0
+    annual_contract_value = round(latest_amount * 12)
+    return latest_amount, annual_contract_value, price_increase_pct
 
 
 def _weighted_bucket() -> str:
@@ -75,66 +92,7 @@ def _weighted_bucket() -> str:
 
 
 def _contract_count_for_customer() -> int:
-    # Weighted so most customers have 1 contract, some have 2, fewer have 3.
     return random.choice([1, 1, 1, 2, 2, 3])
-
-
-def _generate_feedback_entries(count: int, min_days_ago: int, max_days_ago: int, sentiment_bias: list[str]) -> list[dict]:
-    today = datetime.now(timezone.utc).date()
-    entries = []
-    for _ in range(count):
-        sentiment = random.choice(sentiment_bias)
-        category, comment = random.choice(FEEDBACK_POOL[sentiment])
-        days_ago = random.randint(min_days_ago, max_days_ago)
-        entries.append({
-            "date": (today - timedelta(days=days_ago)).isoformat(),
-            "source": random.choice(FEEDBACK_SOURCES),
-            "sentiment": sentiment,
-            "category": category,
-            "comment": comment,
-        })
-    entries.sort(key=lambda e: e["date"], reverse=True)
-    return entries
-
-
-def _generate_customer_feedback(service_trend_bias: str) -> dict:
-    """Historical (12+ months back) and recent-12-months feedback, generated
-    with a mild sentiment skew so accounts that are already trending risky
-    tend to have more negative recent feedback - not purely random, so the
-    data is at least internally plausible for a demo."""
-    if service_trend_bias == "declining":
-        recent_bias = ["Negative", "Negative", "Neutral", "Positive"]
-    elif service_trend_bias == "increasing":
-        recent_bias = ["Positive", "Positive", "Neutral"]
-    else:
-        recent_bias = ["Positive", "Neutral", "Neutral", "Negative"]
-    historical_bias = ["Positive", "Neutral", "Neutral", "Negative"]  # less skewed - baseline
-
-    recent = _generate_feedback_entries(random.randint(2, 5), 1, 365, recent_bias)
-    historical = _generate_feedback_entries(random.randint(1, 3), 366, 900, historical_bias) if random.random() < 0.75 else []
-    return {"recent12Months": recent, "historical": historical}
-
-
-def _generate_service_tickets(eq_type: str) -> list[dict]:
-    failure_modes = PRODUCT_CATALOG[eq_type]["failureModes"]
-    n_tickets = random.randint(2, 6)
-    today = datetime.now(timezone.utc).date()
-    tickets = []
-    for _ in range(n_tickets):
-        ticket_type = random.choice(TICKET_TYPE_WEIGHTS)
-        priority = random.choice(PRIORITY_BY_TYPE[ticket_type])
-        days_ago = random.randint(1, 90)
-        sla_met = random.random() > (0.35 if priority in ("Critical", "High") else 0.1)
-        tickets.append({
-            "date": (today - timedelta(days=days_ago)).isoformat(),
-            "type": ticket_type,
-            "priority": priority,
-            "issue": random.choice(failure_modes),
-            "slaMet": sla_met,
-            "resolutionHours": round(random.uniform(4, 170), 1),
-        })
-    tickets.sort(key=lambda t: t["date"], reverse=True)
-    return tickets
 
 
 def generate_contracts() -> list[dict]:
@@ -142,8 +100,9 @@ def generate_contracts() -> list[dict]:
     seq = 1
     cust_seq = 1
     name_idx = 0
-    region_counts = {"NATT":3, "ETT": 1, "APAC_TT": 1}  # customer counts per region
+    region_counts = {"ETT": 5}  # Europe-only for MVP scope
     eq_types = list(PRODUCT_CATALOG.keys())
+    today = datetime.now(timezone.utc).date()
 
     for region_id, customer_count in region_counts.items():
         channels = REGIONS[region_id]["channels"]
@@ -154,25 +113,28 @@ def generate_contracts() -> list[dict]:
             dealer_id = f"DLR-{100 + (cust_seq % 12)}" if channel == "Dealer" else None
 
             for _ in range(_contract_count_for_customer()):
-                months_on_book = round(random.uniform(3, 60))
-                contract_value = round(random.uniform(8000, 200000) / 500) * 500
-                cost_to_serve_ratio = random.uniform(0.35, 0.55)
-                cost_to_serve = round(contract_value * cost_to_serve_ratio)
-                margin = contract_value - cost_to_serve
-                payment_lag_days = round(random.uniform(0, 55))
+                months_on_book = round(random.uniform(3, 96))  # real samples showed durations up to 120mo
+                duration_months = months_on_book + random.randint(0, 36)
+                contract_start = today - timedelta(days=months_on_book * 30)
                 bucket = _weighted_bucket()
 
                 eq_type = random.choice(eq_types)
+                manufacture_date = contract_start - timedelta(days=random.randint(0, 365))
                 equipment = {
                     "type": eq_type,
                     "count": random.randint(1, 12),
-                    "avgAgeYears": round(random.uniform(1, 16), 1),
-                    "critical": random.random() < 0.4,
+                    "avgAgeYears": round((today - manufacture_date).days / 365, 1),
                 }
-                service_tickets = _generate_service_tickets(eq_type)
-                nps_score = random.randint(0, 10)
-                feedback_bias = "declining" if nps_score <= 4 else "increasing" if nps_score >= 8 else "stable"
-                customer_feedback = _generate_customer_feedback(feedback_bias)
+                claims = _generate_claims(eq_type, contract_start, today)
+
+                # Warranty: short relative to contract duration, matching what
+                # real data suggests (most mature contracts are out of
+                # warranty) - typically 12-24 months from manufacture.
+                warranty_start = manufacture_date
+                warranty_end = manufacture_date + timedelta(days=random.choice([365, 545, 730]))
+
+                monthly_amount, annual_contract_value, price_increase_pct = _generate_invoice_trend(months_on_book)
+                service_general = random.random() < 0.55
 
                 contracts.append({
                     "contractId": f"CT-{seq:04d}",
@@ -182,46 +144,47 @@ def generate_contracts() -> list[dict]:
                     "channel": channel,
                     "dealerId": dealer_id,
                     "monthsOnBook": months_on_book,
-                    "contractValue": contract_value,
-                    "costToServe": cost_to_serve,
-                    "margin": margin,
-                    "paymentLagDays": payment_lag_days,
+                    "durationMonths": duration_months,
+                    "contractValue": annual_contract_value,
+                    "monthlyAmount": monthly_amount,
+                    "priceIncreasePct": price_increase_pct,
+                    "serviceGeneral": service_general,
                     "equipment": equipment,
-                    "serviceTickets": service_tickets,
-                    "customerFeedback": customer_feedback,
-                    "feedbackTrend": feedback_sentiment_trend(customer_feedback),
-                    "pmCompletionRate": round(random.uniform(0.40, 0.95), 2),
-                    "latePaymentsCount": round(random.uniform(0, 5)) if random.random() < 0.5 else 0,
-                    "outstandingBalance": round(contract_value * random.uniform(0, 0.15)) if random.random() < 0.4 else 0,
-                    "competitorBidReceived": random.random() < 0.35,
-                    "npsScore": nps_score,
-                    "portalLogins": random.randint(0, 14),
-                    "lastExecTouchpointDaysAgo": random.randint(10, 400),
-                    "lastPriceIncreasePct": round(random.uniform(0.0, 0.20), 3),
+                    "claims": claims,
+                    "warrantyStart": warranty_start.isoformat(),
+                    "warrantyEnd": warranty_end.isoformat(),
+                    # No real feedback/NPS source confirmed anywhere in eCare -
+                    # kept as an always-empty structure rather than fabricated,
+                    # so feedback_sentiment_trend degrades honestly instead of
+                    # lying. See rules.py's docstring.
+                    "customerFeedback": {"recent12Months": [], "historical": []},
+                    "feedbackTrend": None,  # set below, after generation
                     "bucket": bucket,
                     "lastMilestoneProcessed": None,
                     # riskScore / riskFactors / segment are assigned in a
-                    # second pass below, once the book's median margin is known.
+                    # second pass below, once the book's median contract
+                    # value is known.
                     "riskScore": None,
                     "riskFactors": None,
                     "segment": None,
-                    # Rule-based, not from an agent - top 3 service issues by
-                    # severity/SLA performance, shown as "reason for loss" in
-                    # the UI. Only meaningful (and only computed) for Lost contracts.
-                    "lostReasons": top_loss_reasons(service_tickets) if bucket == "Lost" else None,
+                    "lostReasons": top_loss_reasons(claims) if bucket == "Lost" else None,
                 })
                 seq += 1
             cust_seq += 1
             name_idx += 1
 
-    # Second pass: risk score is independent per contract, but segment needs
-    # the book-wide median margin, so compute that only after all contracts exist.
-    median_margin = sorted(c["margin"] for c in contracts)[len(contracts) // 2]
     for c in contracts:
-        score, factors = compute_risk(c)
+        c["feedbackTrend"] = feedback_sentiment_trend(c["customerFeedback"])
+
+    # Second pass: risk score is independent per contract, but segment needs
+    # the book-wide median contract value, so compute that only after all
+    # contracts exist.
+    median_contract_value = sorted(c["contractValue"] for c in contracts)[len(contracts) // 2]
+    for c in contracts:
+        score, factors = compute_risk(c, today=today)
         c["riskScore"] = score
         c["riskFactors"] = factors
-        c["segment"] = compute_segment(score, c["margin"], median_margin)
+        c["segment"] = compute_segment(score, c["contractValue"], median_contract_value)
 
     return contracts
 
@@ -234,8 +197,6 @@ class AppState:
         self.contracts: list[dict] = generate_contracts()
         self.trace: list[dict] = []
         self.batch_status: dict = {"running": False, "done": 0, "total": 0, "lastError": None}
-        # Pre-computed, cached-on-demand agents - keyed by id, not tied to a
-        # milestone run, per the "runs beforehand" design.
         self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
         self.customer_summaries: dict = {}  # customerId -> {status, data, error}
 

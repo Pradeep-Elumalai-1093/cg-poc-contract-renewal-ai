@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from state import state, CAMPAIGN_TAXONOMY, REGIONS, BUCKETS
-from rules import MODEL_INFO, suggested_renewal_terms
+from rules import MODEL_INFO
 
 app = FastAPI(title="Proactive Contract Renewal")
 
@@ -166,9 +166,8 @@ async def _process_batch(due: list[dict]):
             # should never silently proceed with "Not yet generated."
             ticket_summary = await _ensure_ticket_summary(contract)
             customer_summary = await _ensure_customer_summary(contract)
-            terms = suggested_renewal_terms(contract)
 
-            result = await run_agent_graph(contract, prior, ticket_summary, customer_summary, terms)
+            result = await run_agent_graph(contract, prior, ticket_summary, customer_summary)
             state.trace.append(result)
             if result["error"]:
                 # Leave lastMilestoneProcessed untouched so this contract is
@@ -228,7 +227,6 @@ def _aggregate(contracts: list[dict]) -> dict:
         "customerCount": len(customer_ids),
         "contractCount": len(contracts),
         "totalValue": sum(c["contractValue"] for c in contracts),
-        "totalMargin": sum(c["margin"] for c in contracts),
         "avgRiskScore": round(sum(c["riskScore"] for c in contracts) / n, 1) if contracts else 0,
         "segmentCounts": segment_counts,
         "bucketCounts": bucket_counts,
