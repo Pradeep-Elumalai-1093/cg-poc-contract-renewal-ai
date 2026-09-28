@@ -1,8 +1,11 @@
 import asyncio
+import json
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from utils.CustomJSONEncoder import CustomJSONEncoder
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException

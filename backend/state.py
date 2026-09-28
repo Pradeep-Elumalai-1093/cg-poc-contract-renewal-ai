@@ -17,11 +17,17 @@ schema (real field names, real value ranges observed in the sample
 extracts), not a live Snowflake connection - swapping this module for a
 real loader is the next step, not done here.
 """
+import os
 import random
 from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 
 from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons, feedback_sentiment_trend
+
+# "synthetic" (default) generates demo data in-process; "local" reads real
+# exported files from disk via local_data_loader.py. Same switch pattern as
+# llm_client.py's LLM_PROVIDER - one env var, no code change to flip it.
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "local")
 
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
@@ -167,21 +173,29 @@ def generate_contracts() -> list[dict]:
                     "riskScore": None,
                     "riskFactors": None,
                     "segment": None,
-                    "lostReasons": top_loss_reasons(claims) if bucket == "Lost" else None,
+                    "lostReasons": None,  # computed uniformly in _finalize_contracts below
                 })
                 seq += 1
             cust_seq += 1
             name_idx += 1
 
+    return _finalize_contracts(contracts)
+
+
+def _finalize_contracts(contracts: list[dict]) -> list[dict]:
+    """Shared second pass for both data sources (synthetic and local-file):
+    fills in feedback trend, lost-reason ranking, and the risk score /
+    segment, which all need either per-contract derivation or the book-
+    wide median contract value. Kept as one function so the two loaders
+    can't silently drift into scoring contracts differently."""
     for c in contracts:
         c["feedbackTrend"] = feedback_sentiment_trend(c["customerFeedback"])
+        if c["bucket"] == "Lost" and c["lostReasons"] is None:
+            c["lostReasons"] = top_loss_reasons(c.get("claims", []))
 
-    # Second pass: risk score is independent per contract, but segment needs
-    # the book-wide median contract value, so compute that only after all
-    # contracts exist.
-    median_contract_value = sorted(c["contractValue"] for c in contracts)[len(contracts) // 2]
+    median_contract_value = sorted(c["contractValue"] for c in contracts)[len(contracts) // 2] if contracts else 0
     for c in contracts:
-        score, factors = compute_risk(c, today=today)
+        score, factors = compute_risk(c)
         c["riskScore"] = score
         c["riskFactors"] = factors
         c["segment"] = compute_segment(score, c["contractValue"], median_contract_value)
@@ -189,19 +203,29 @@ def generate_contracts() -> list[dict]:
     return contracts
 
 
+def load_contracts() -> list[dict]:
+    """Single entry point AppState uses to get contracts, regardless of
+    source. Add a new DATA_SOURCE branch here (e.g. "snowflake") without
+    touching AppState itself when that becomes relevant."""
+    if DATA_SOURCE == "local":
+        from local_data_loader import load_contracts_from_local
+        return _finalize_contracts(load_contracts_from_local())
+    return generate_contracts()
+
+
 class AppState:
     """Single in-process store. Not thread-safe by design - this runs on
     asyncio's single event loop, which is sufficient for a POC."""
 
     def __init__(self):
-        self.contracts: list[dict] = generate_contracts()
+        self.contracts: list[dict] = load_contracts()
         self.trace: list[dict] = []
         self.batch_status: dict = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
         self.customer_summaries: dict = {}  # customerId -> {status, data, error}
 
     def reset(self):
-        self.contracts = generate_contracts()
+        self.contracts = load_contracts()
         self.trace = []
         self.batch_status = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries = {}

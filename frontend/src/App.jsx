@@ -364,40 +364,34 @@ function EscalationPanel({ record, onToggleAction }) {
 }
 
 
-const PRIORITY_COLOR = { Critical: T.risk, High: T.amber, Medium: T.info, Low: T.inkFaint };
-const PRIORITY_BG = { Critical: T.riskBg, High: T.amberBg, Medium: T.infoBg, Low: T.surfaceSunken };
-
-function ServiceTicketHistory({ equipment, tickets }) {
+function ServiceTicketHistory({ equipment, claims }) {
   return (
     <>
       <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
-        Historical service tickets
+        Historical service claims
       </div>
       <Card style={{ padding: 0, overflow: "hidden", marginBottom: 18 }}>
         <div style={{ padding: "9px 14px", borderBottom: `1px solid ${T.border}`, fontSize: 11.5, color: T.inkMuted, background: T.surfaceSunken }}>
           {equipment.type} · {equipment.count} unit{equipment.count === 1 ? "" : "s"} · avg {equipment.avgAgeYears}y old
-          {equipment.critical && <span style={{ color: T.risk, fontWeight: 600 }}> · Critical equipment</span>}
         </div>
-        {(!tickets || tickets.length === 0) ? (
-          <div style={{ padding: 16, fontSize: 12, color: T.inkFaint }}>No service tickets on record.</div>
+        {(!claims || claims.length === 0) ? (
+          <div style={{ padding: 16, fontSize: 12, color: T.inkFaint }}>No service claims on record.</div>
         ) : (
           <div style={{ maxHeight: 240, overflowY: "auto" }}>
-            {tickets.map((t, i) => (
+            {claims.map((c, i) => (
               <div
                 key={i}
                 style={{
                   display: "flex", alignItems: "center", gap: 10, padding: "8px 14px",
-                  borderBottom: i < tickets.length - 1 ? `1px solid ${T.border}` : "none", fontSize: 12.5,
+                  borderBottom: i < claims.length - 1 ? `1px solid ${T.border}` : "none", fontSize: 12.5,
                 }}
               >
-                <div style={{ width: 78, flexShrink: 0, fontFamily: "ui-monospace, monospace", fontSize: 11, color: T.inkFaint }}>{t.date}</div>
+                <div style={{ width: 78, flexShrink: 0, fontFamily: "ui-monospace, monospace", fontSize: 11, color: T.inkFaint }}>{c.date}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 600 }}>{t.issue}</span>
-                  <span style={{ color: T.inkMuted }}>
-                    {" "}· {t.type}{t.slaMet === false ? " · SLA missed" : ""} · {t.resolutionHours}h resolution
-                  </span>
+                  <span style={{ fontWeight: 600 }}>{c.issue}</span>
+                  <span style={{ color: T.inkMuted }}> · {c.faultId}</span>
                 </div>
-                <Badge text={t.priority} color={PRIORITY_COLOR[t.priority] || T.inkMuted} bg={PRIORITY_BG[t.priority] || T.surfaceSunken} />
+                {c.jobWrittenOff && <Badge text="Written off" color={T.risk} bg={T.riskBg} />}
               </div>
             ))}
           </div>
@@ -474,7 +468,7 @@ function CustomerFeedbackPanel({ feedback, trend }) {
 function RiskFactorBreakdown({ factors }) {
   if (!factors) return null;
   const entries = Object.entries(factors).sort((a, b) => b[1] - a[1]);
-  const FACTOR_MAX = { "SLA breaches": 20, "Emergency ticket ratio": 12, "Repeat issues": 10, "PM completion rate": 15, "Late payments": 15, "Outstanding balance": 6, "Competitor bid": 15, "NPS score": 15, "Portal engagement": 8, "Last price increase": 6, "Exec touchpoint gap": 8 };
+  const FACTOR_MAX = { "Repeat issue": 20, "Claim frequency": 15, "Claim recency": 16, "Written-off ratio": 14, "Coverage gap": 6, "Equipment age": 13, "Warranty status": 6, "Price increase": 10 };
   return (
     <>
       <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6 }}>
@@ -568,11 +562,10 @@ function SegmentBar({ counts }) {
 function aggregateBookMetrics(list, traceByContract) {
   const customerIds = new Set();
   const segmentCounts = { "High Risk": 0, "At Risk": 0, "Healthy": 0, "Standard": 0 };
-  let totalValue = 0, totalMargin = 0, potentialAtRiskValue = 0, lostRevenueValue = 0, lostCount = 0, potentialRevenueValue = 0;
+  let totalValue = 0, potentialAtRiskValue = 0, lostRevenueValue = 0, lostCount = 0, potentialRevenueValue = 0;
   list.forEach((c) => {
     customerIds.add(c.customerId);
     totalValue += c.contractValue;
-    totalMargin += c.margin;
     segmentCounts[c.segment] = (segmentCounts[c.segment] || 0) + 1;
     const outcome = traceByContract[c.contractId]?.outcome;
     if (c.bucket === "Lost" || outcome === "Declined") {
@@ -584,7 +577,7 @@ function aggregateBookMetrics(list, traceByContract) {
       potentialRevenueValue += c.contractValue;
     }
   });
-  return { customerCount: customerIds.size, contractCount: list.length, totalValue, totalMargin, potentialAtRiskValue, lostRevenueValue, lostCount, potentialRevenueValue, segmentCounts };
+  return { customerCount: customerIds.size, contractCount: list.length, totalValue, potentialAtRiskValue, lostRevenueValue, lostCount, potentialRevenueValue, segmentCounts };
 }
 
 // Same shape/logic as the backend's /api/campaigns (assigned/engaged/
@@ -862,6 +855,18 @@ export default function ContractRenewalPOC() {
         api.getContracts(), api.getTrace(), api.getMetrics(),
         api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(),
       ]);
+      if (!Array.isArray(c)) {
+        // /api/contracts didn't return a list - most likely the backend hit
+        // an exception while building state.contracts (e.g. a data-loading
+        // error) and returned an error body instead. Surface that clearly
+        // rather than silently corrupting state and crashing later, deep in
+        // an unrelated useMemo, with no indication of the real cause.
+        throw new Error(
+          `/api/contracts did not return a list (got ${typeof c}). Check the backend logs - ` +
+          `this usually means contract loading threw an exception (e.g. DATA_SOURCE=local pointing ` +
+          `at a missing/misconfigured file).`
+        );
+      }
       setContracts(c); setTrace(t); setMetrics(m);
       setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust);
     } catch (e) {
@@ -1447,7 +1452,7 @@ export default function ContractRenewalPOC() {
             <p style={{ fontSize: 13.5, lineHeight: 1.6, color: T.ink, margin: "0 0 20px" }}>
               Climate Solutions Transportation (CST) renews thousands of service contracts every year.
               Today, that process is reactive: an at-risk account is usually noticed only after the contract has already lapsed or not noticed at all.
-              The signals that would have predicted the loss (a slipping SLA, a late payment, a cooling NPS score, a competitor circling) exist somewhere in the business, but nothing pulls
+              The signals that would have predicted the loss (a recurring equipment fault, a claim just weeks ago, a contract quietly out of warranty) exist somewhere in the business, but nothing pulls
               them together in time for a rep to act. And when a rep does spot a risk, there's no consistent playbook
               for what to do next, so the response depends entirely on that one person's judgment and available time.
             </p>
@@ -1468,7 +1473,7 @@ export default function ContractRenewalPOC() {
             </p>
             <ol style={{ fontSize: 13.5, lineHeight: 1.75, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
               <li><b>Identifies upcoming renewal risk</b> - every contract is checked automatically against its renewal milestones, so risk surfaces weeks before a contract could lapse, not after.</li>
-              <li><b>Prioritizes accounts by business value</b> - risk alone isn't the whole story; a high-risk, high-margin account is a very different priority than a high-risk, low-margin one, so accounts are ranked by risk crossed with value, not risk in isolation.</li>
+              <li><b>Prioritizes accounts by business value</b> - risk alone isn't the whole story; a high-risk, high-value account is a very different priority than a high-risk, low-value one, so accounts are ranked by risk crossed with value, not risk in isolation.</li>
               <li><b>Recommends an action to retain the customer</b> - each flagged account gets one concrete, grounded retention action, not just a "high risk" label.</li>
               <li><b>Generates the outreach content</b> - the actual email a rep can send is drafted for them, referencing this specific customer's real history, so there's no blank page between "risk found" and "customer contacted."</li>
               <li><b>Tracks the outcome</b> - every recommendation and its real-world result (engaged, declined, no response) is logged, so the business can see which actions actually retain customers, not just how many were sent.</li>
@@ -1494,8 +1499,8 @@ export default function ContractRenewalPOC() {
 
             <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, borderBottom: `1px solid ${T.border}`, paddingBottom: 6, marginBottom: 8 }}>How we're achieving it</div>
             <ul style={{ fontSize: 13.5, lineHeight: 1.7, color: T.ink, margin: "0 0 20px", paddingLeft: 20 }}>
-              <li><b>Rule-based risk scorecard</b> - 11 weighted factors (SLA breaches, payment behavior, NPS, competitor activity, and more) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product.</li>
-              <li><b>Risk &times; value Segmentation</b> - crosses the risk score against contract margin so a high-risk, high-margin account is treated as a different priority than a high-risk, low-margin one.</li>
+              <li><b>Rule-based risk scorecard</b> - 8 weighted factors grounded in real service claim and contract history (repeat faults, claim frequency and recency, written-off jobs, coverage gaps, equipment age, warranty status, price increases) produce a 0&ndash;100 score with a ranked driver-feature breakdown. This is a deterministic scorecard, not a trained ML model, and it's labeled that way honestly in the product. A handful of factors considered early on (payment behavior, NPS, competitor activity) were checked against real data and dropped rather than approximated, since no real source for them has been confirmed yet.</li>
+              <li><b>Risk &times; value Segmentation</b> - crosses the risk score against contract value so a high-risk, high-value account is treated as a different priority than a high-risk, low-value one.</li>
               <li><b>Six-agent pipeline</b> - Service Ticket Summary, Customer Summary & Customer Feedback Summary agents run ahead of time and are cached; a Recommendation Agent proposes a retention action and any relevant upsell; an Evaluation Agent scores it against a rubric and triggers a retry or escalation; a Content Agent drafts the outreach email.</li>
               <li><b>Full traceability</b> - every recommendation logs its prompts, scores, retries, latency, and token cost, inspectable end to end.</li>
               <li><b>Swappable LLM provider</b> - Claude API or a locally-hosted vLLM model, switched with one configuration change.</li>
@@ -1515,7 +1520,7 @@ export default function ContractRenewalPOC() {
               <li>Renewal milestones are 90/60/45/30/10 days to expiry - not yet validated against CST's actual renewal cadence.</li>
               <li>The 5-item retention action taxonomy is our proposal, not CST's existing playbook (none was provided).</li>
               <li>The risk model is deliberately rule-based, not trained ML - labeled honestly as a scorecard standing in for where a real model would go.</li>
-              <li>Risk x Value Segmentation thresholds (score ≥50/30, margin vs. book median) are illustrative starting points, not calibrated.</li>
+              <li>Risk x Value Segmentation thresholds (score ≥50/30, contract value vs. book median) are illustrative starting points, not calibrated.</li>
               <li>All data is synthetic - customers, contracts, service tickets, financials, and engagement signals are generated, not sourced from CST systems.</li>
               <li>The product catalog (5 equipment types) is representative, not CST's actual catalog.</li>
               <li>The "Campaign Response by Risk Bucket" chart is a live proxy from logged outcomes, not a validated historical renewal backtest - no ground truth exists to validate against.</li>
@@ -1865,7 +1870,7 @@ export default function ContractRenewalPOC() {
               <StatBlock label="Lost" value={dashGlobalMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
               <StatBlock label="" value="" />
               <StatBlock label="Total contract value" value={`$${(dashGlobalMetrics.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
-              <StatBlock label="Margin" value={`$${(dashGlobalMetrics.totalMargin / 1000000).toFixed(2)}M`} />
+              <StatBlock label="" value="" />
               <StatBlock label="Lost revenue $" value={`$${(dashGlobalMetrics.lostRevenueValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
               <StatBlock label="Converted $" value={`$${(dashGlobalMetrics.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
               <StatBlock label="Potential $ at risk" value={`$${(dashGlobalMetrics.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
@@ -1885,7 +1890,6 @@ export default function ContractRenewalPOC() {
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-                    {console.log(m)}
                     <StatBlock label="Customers" value={m.customerCount} />
                     <StatBlock label="Contracts" value={m.contractCount} />
                     <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
@@ -1896,7 +1900,6 @@ export default function ContractRenewalPOC() {
                     <StatBlock label="At-risk contracts" value={m.segmentCounts["At Risk"]} sub="At Risk segment" accent={T.amber} />
                     <StatBlock label="" value="" />
                     <StatBlock label="Total contract value" value={`$${(m.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
-                    <StatBlock label="Margin" value={`$${(m.totalMargin / 1000000).toFixed(2)}M`} />
                     <StatBlock label="Converted $" value={`$${(m.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
                     <StatBlock label="Potential $ at risk" value={`$${(m.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
                     <StatBlock label="Lost revenue $" value={`$${(m.lostRevenueValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
@@ -2081,10 +2084,10 @@ export default function ContractRenewalPOC() {
             )}
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
-              <StatBlock label="Contract value" value={`$${selectedContract.contractValue.toLocaleString()}`} />
-              <StatBlock label="Margin" value={`$${selectedContract.margin.toLocaleString()}`} />
+              <StatBlock label="Contract value" value={`$${selectedContract.contractValue.toLocaleString()}`} sub="annual, from billing history" />
+              <StatBlock label="Monthly amount" value={`$${selectedContract.monthlyAmount.toLocaleString()}`} />
               <StatBlock label="Months on book" value={selectedContract.monthsOnBook} />
-              <StatBlock label="Payment lag" value={`${selectedContract.paymentLagDays}d`} />
+              <StatBlock label="Price increase" value={selectedContract.priceIncreasePct != null ? `${(selectedContract.priceIncreasePct * 100).toFixed(1)}%` : "—"} sub={selectedContract.priceIncreasePct == null ? "no billing history on record" : undefined} />
             </div>
 
             {/* Globally available regardless of which drawer tab is active */}
@@ -2183,7 +2186,7 @@ export default function ContractRenewalPOC() {
                   loadingLabel="Reading service ticket history"
                   placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent. Generated automatically during the next batch run if you skip this."
                 />
-                <ServiceTicketHistory equipment={selectedContract.equipment} tickets={selectedContract.serviceTickets} />
+                <ServiceTicketHistory equipment={selectedContract.equipment} claims={selectedContract.claims} />
               </>
             )}
 
