@@ -1,67 +1,47 @@
 /* =====================================================================
-   Contract Risk Score — Deterministic Model (v3, Europe MVP)
+   Contract Risk Score + Raw Claim/Pricing Metrics — Unified (v4, Europe MVP)
    Source: REF_DB.ECARE_CTE_STG
    =====================================================================
-   Design: same mechanics as before — a sum of independent, capped point
-   factors, weights sum to exactly 100 at max. Every factor is tied to a
-   confirmed real field, verified against actual sample data (not just
-   metadata). Placeholder band thresholds are marked explicitly.
+   Combines contract_risk_score_v1.sql (v3) and
+   contract_claim_pricing_metrics.sql into one query, per request. Each
+   underlying CTE (claims, repeat-fault, service jobs, invoice/price
+   trend) is now defined exactly ONCE and feeds both the weighted risk
+   score and the raw metric columns - the two source files each defined
+   these independently, which is why combining them by concatenation
+   produced duplicate CTE names (a hard compile error in Snowflake, not
+   just untidy) and a stray trailing comma before the final FROM.
 
-   CHANGES FROM v2 (real full-book score distribution, 106,106 contracts):
-   The top 8 distinct score values covered 52% of the entire book — not a
-   smooth distribution, a model collapsing into a handful of buckets.
-   Traced back through the factor weights: every dominant spike (20, 33,
-   12, 27) is built from warranty_status_points (12) + coverage_gap_points
-   (8) alone, or those plus an equipment-age band. That means:
-     - is_under_warranty is likely near-constant across a mature contract
-       book (most contracts run 5-10 years, warranty periods are short) —
-       it was consuming 12% of the model's weight to say the same thing
-       about nearly everyone, not discriminating anything.
-     - The claims-based factors (repeat/frequency/recency/written-off —
-       57 of the 100 points) sit at 0 for a large share of the book,
-       meaning many contracts show zero recorded claims in the join.
-   FIX: shifted weight away from the two static/near-constant factors
-   (warranty 12->6, coverage gap 8->6) into the two factors that reflect
-   current behavior rather than a fixed attribute (recency 12->16,
-   written-off ratio 10->14). New weights: 20+15+16+14+6+13+6+10=100.
-   NOT YET CONFIRMED — pending three aggregate-only numbers: the real
-   is_under_warranty split, the real SERVICEGEN split, and the % of
-   contracts with zero total claims (the last one matters most: if that
-   rate is surprisingly high, it may be a CONTRACTID join gap rather than
-   a genuine clean-record rate).
+   Also fixed: the final SELECT was reading from
+   REF_DB.ECARE_CTE_STG.TEMP_CONTRACT - a different, unfiltered table
+   than contract_base (built from INT_CONTRACT with ISCURRENT = TRUE and
+   DURATION > 0 already applied). That looked like a stray reference left
+   over from merging the two files rather than an intentional swap -
+   confirm if TEMP_CONTRACT was actually meant on purpose; this version
+   selects from contract_base, matching both source files' original intent.
 
-   CHANGES FROM v1:
-   - Factor 1 (repeat issue) is now magnitude-scaled, not a flat 3-tier
-     band. Real sample data showed the same fault recurring up to 10
-     times on one contract — a flat "3+" bucket would have scored a
-     3-repeat and a 10-repeat identically, which real data shows is wrong.
-   - Factor 8 (price increase) is NEW — INT_INVOICE confirms a real,
-     computable price-change-over-time signal, resolving a gap this
-     model previously treated as permanently absent.
-   - Late payment / outstanding balance factors remain DROPPED. Checked
-     INT_INVOICE directly: it has DATEDUE/AMOUNT (what was billed) but
-     no paid/settled/balance field. Actual payment status likely lives
-     in JDE, not eCare — this needs a separate access confirmation, not
-     more eCare sampling.
-   - Contact email fields removed from data model scope entirely (client
-     confirmed outreach delivery is handled downstream, not by this app).
+   All the design notes from v3 still apply and are condensed below;
+   see contract_risk_score_v1.sql's full history if you need the complete
+   reasoning trail (score-clustering diagnosis, the three still-pending
+   aggregate confirmations, etc).
 
-   STILL OPEN: claim-frequency band thresholds (Factor 2) are placeholders
-   — run Step 0 below against the real book before trusting them.
-
-   STILL OPEN: contract renewal creates a new CONTRACTID (confirmed via
-   real sample: same CUSTOMERID moved from CONTRACTID 234276 to 362872).
-   Claims/service jobs scoped by CONTRACTID means a renewed contract
-   starts with a clean risk history — confirmed as intended behavior,
-   not a bug, per client sign-off.
+   STILL OPEN:
+   - Claim-frequency band thresholds (Factor 2) are placeholders - run
+     Step 0 below against the real book before trusting them.
+   - Written-off ratio direction (Factor 4) and warranty-record-missing
+     handling (Factor 7) are flagged assumptions, not confirmed rules.
+   - Price-increase direction (Factor 8) is a judgment call, not read
+     off any confirmed source.
+   - REPEAT_FAULTS is the highest recurrence count of any single fault
+     (matches Factor 1's basis) - not "total claims that were a repeat,"
+     which is a different number. See the alternate calc commented below
+     if you actually meant the latter.
    ===================================================================== */
 
 
 /* ---------------------------------------------------------------------
    STEP 0 (run first, not part of the score): check the real distribution
    of claims-per-month-of-duration across the European book, to replace
-   the placeholder bands in Factor 2 below with actual percentiles rather
-   than guessed cutoffs.
+   the placeholder bands in Factor 2 below with actual percentiles.
    --------------------------------------------------------------------- */
 -- SELECT
 --     APPROX_PERCENTILE(claims_per_month, 0.5)  AS p50,
@@ -69,14 +49,6 @@
 --     APPROX_PERCENTILE(claims_per_month, 0.90) AS p90
 -- FROM ( ... claims_per_contract CTE below, with claims_per_month computed ... );
 
-
-/* ---------------------------------------------------------------------
-   MAIN QUERY: one row per active contract, with a points breakdown per
-   factor (mirrors the app's existing risk-driver breakdown pattern), a
-   total RISK_SCORE, and ANNUAL_CONTRACT_VALUE as informational context
-   (not part of the score itself — this is the real-value fix from
-   INT_INVOICE, used elsewhere for margin/segmentation, not risk).
-   --------------------------------------------------------------------- */
 
 WITH contract_base AS (
     SELECT
@@ -92,25 +64,29 @@ WITH contract_base AS (
       AND c.DURATION > 0                 -- avoid divide-by-zero in Factor 2
 ),
 
--- Claim-level signals, from INT_WEBCLAIM only.
+-- Claim-level signals, from INT_WEBCLAIM only. Defined once - feeds both
+-- the risk score (Factors 2 and 3) and the raw TOTAL_CLAIMS/
+-- CLAIMS_LAST_90D output columns.
 claims_per_contract AS (
     SELECT
         wc.CONTRACTID,
-        COUNT(*)                                                          AS total_claims,
-        MAX(wc.CLAIMDATE)                                                 AS most_recent_claim_date,
+        COUNT(*)                                                          AS TOTAL_CLAIMS,
         SUM(CASE WHEN wc.CLAIMDATE >= DATEADD(day, -90, CURRENT_DATE())
-                 THEN 1 ELSE 0 END)                                       AS claims_last_90d
+                 THEN 1 ELSE 0 END)                                       AS CLAIMS_LAST_90D
     FROM REF_DB.ECARE_CTE_STG.INT_WEBCLAIM wc
     WHERE wc.CONTRACTID IS NOT NULL
     GROUP BY wc.CONTRACTID
 ),
 
 -- Repeat-fault signal: does the SAME fault recur on this contract, and
--- how many times? (magnitude, not just a yes/no flag)
+-- how many times? Feeds Factor 1 and the raw REPEAT_FAULTS column.
 repeat_fault_check AS (
     SELECT
         CONTRACTID,
-        MAX(fault_count) AS max_repeat_count
+        MAX(fault_count) AS REPEAT_FAULTS
+        -- ALTERNATE interpretation - total claims that were a repeat of an
+        -- earlier fault, not the single highest recurrence count:
+        -- SUM(fault_count) - COUNT(*) AS REPEAT_FAULTS
     FROM (
         SELECT CONTRACTID, FAULTID, COUNT(*) AS fault_count
         FROM REF_DB.ECARE_CTE_STG.INT_WEBCLAIM
@@ -121,18 +97,20 @@ repeat_fault_check AS (
 ),
 
 -- Service-job signals, from INT_Service only (JOBWRITTENOFF lives here,
--- not on the claim table).
+-- not on the claim table). Feeds Factor 4 and the raw
+-- WRITTEN_OFF_JOBS/TOTAL_SERVICE_JOBS columns.
 service_per_contract AS (
     SELECT
         s.CONTRACTID,
-        COUNT(*)                                                          AS total_service_jobs,
-        SUM(CASE WHEN s.JOBWRITTENOFF = TRUE THEN 1 ELSE 0 END)           AS written_off_jobs
+        COUNT(*)                                                AS TOTAL_SERVICE_JOBS,
+        SUM(CASE WHEN s.JOBWRITTENOFF = TRUE THEN 1 ELSE 0 END) AS WRITTEN_OFF_JOBS
     FROM REF_DB.ECARE_CTE_STG.INT_Service s
     WHERE s.CONTRACTID IS NOT NULL
     GROUP BY s.CONTRACTID
 ),
 
--- Equipment age, from INT_UNIT.
+-- Equipment age, from INT_UNIT. Feeds Factor 6 only (no raw-metric
+-- equivalent was requested).
 equipment AS (
     SELECT
         u.UNITID,
@@ -142,6 +120,7 @@ equipment AS (
 ),
 
 -- Warranty status as of today, from INT_WARRANTY + INT_WARRANTYADN.
+-- Feeds Factor 7 only.
 warranty_status AS (
     SELECT
         w.UNITID,
@@ -153,9 +132,9 @@ warranty_status AS (
     GROUP BY w.UNITID
 ),
 
--- NEW: price trend from INT_INVOICE. First vs. latest billed installment
--- amount for this contract, by due date. Also gives us the real annual
--- contract value (informational output, not a risk factor).
+-- Price trend from INT_INVOICE: first vs. latest billed installment
+-- amount for this contract, by due date. Feeds Factor 8 and the raw
+-- PRICE_INCREASE_PCT column.
 invoice_endpoints AS (
     SELECT
         CONTRACTID,
@@ -168,20 +147,20 @@ invoice_endpoints AS (
 price_trend AS (
     SELECT
         f.CONTRACTID,
-        f.AMOUNT AS first_amount,
-        l.AMOUNT AS latest_amount,
-        CASE WHEN f.AMOUNT > 0 THEN (l.AMOUNT - f.AMOUNT) / f.AMOUNT::FLOAT ELSE NULL END AS price_increase_pct
+        CASE WHEN f.AMOUNT > 0 THEN (l.AMOUNT - f.AMOUNT) / f.AMOUNT::FLOAT ELSE NULL END AS PRICE_INCREASE_PCT
     FROM invoice_endpoints f
     JOIN invoice_endpoints l ON l.CONTRACTID = f.CONTRACTID AND l.rn_last = 1
     WHERE f.rn_first = 1
 ),
+
+-- Real billed annual value, replacing the ambiguous point-in-time
+-- CONTRACT_PRICE. Informational output, not a risk factor. Assumes
+-- monthly installments; adjust the *12 multiplier if a contract's
+-- interval isn't monthly (join CONTRACT_INTERVAL_DESC to confirm per-row).
 annual_value AS (
-    -- Real billed value, replacing the ambiguous point-in-time CONTRACT_PRICE.
-    -- Assumes monthly installments; adjust the *12 multiplier if a contract's
-    -- interval isn't monthly (join CONTRACT_INTERVAL_DESC to confirm per-row).
     SELECT
         CONTRACTID,
-        AVG(AMOUNT) * 12 AS annual_contract_value
+        AVG(AMOUNT) * 12 AS ANNUAL_CONTRACT_VALUE
     FROM REF_DB.ECARE_CTE_STG.INT_INVOICE
     WHERE DATEDUE >= DATEADD(month, -12, CURRENT_DATE())
     GROUP BY CONTRACTID
@@ -191,62 +170,62 @@ SELECT
     cb.CONTRACTID,
     cb.CUSTOMERID,
     cb.UNITID,
-    av.annual_contract_value AS ANNUAL_CONTRACT_VALUE,  -- informational, not part of the score
+
+    -- Raw metrics (the 5 requested columns, plus TOTAL_SERVICE_JOBS as
+    -- supporting context for the written-off ratio if needed downstream)
+    COALESCE(cpc.TOTAL_CLAIMS, 0)     AS TOTAL_CLAIMS,
+    COALESCE(cpc.CLAIMS_LAST_90D, 0)  AS CLAIMS_LAST_90D,
+    COALESCE(rf.REPEAT_FAULTS, 0)     AS REPEAT_FAULTS,
+    COALESCE(spc.WRITTEN_OFF_JOBS, 0) AS WRITTEN_OFF_JOBS,
+    spc.TOTAL_SERVICE_JOBS,
+    pt.PRICE_INCREASE_PCT,
+
+    av.ANNUAL_CONTRACT_VALUE,
 
     -- ============================================================
-    -- Factor 1: Repeat issue signal (max 20 pts) — MAGNITUDE-SCALED
-    -- Real sample data showed the same fault recurring up to 10 times
-    -- on one contract; a flat "3+" bucket can't distinguish that from
-    -- a single extra repeat. Scales linearly, capped at 20.
+    -- Factor 1: Repeat issue signal (max 20 pts) — magnitude-scaled
     -- ============================================================
-    LEAST(20, GREATEST(0, (COALESCE(rf.max_repeat_count, 1) - 1) * 4)) AS repeat_issue_points,
+    LEAST(20, GREATEST(0, (COALESCE(rf.REPEAT_FAULTS, 1) - 1) * 4)) AS repeat_issue_points,
 
     -- ============================================================
-    -- Factor 2: Claim frequency, normalized by contract duration (max 15 pts)
+    -- Factor 2: Claim frequency, normalized by duration (max 15 pts)
     -- PLACEHOLDER BANDS — replace with real percentiles from Step 0.
     -- ============================================================
     CASE
-        WHEN (COALESCE(cpc.total_claims, 0) / cb.DURATION::FLOAT) >= 0.6 THEN 15
-        WHEN (COALESCE(cpc.total_claims, 0) / cb.DURATION::FLOAT) >= 0.3 THEN 9
-        WHEN (COALESCE(cpc.total_claims, 0) / cb.DURATION::FLOAT) >= 0.1 THEN 4
+        WHEN (COALESCE(cpc.TOTAL_CLAIMS, 0) / cb.DURATION::FLOAT) >= 0.6 THEN 15
+        WHEN (COALESCE(cpc.TOTAL_CLAIMS, 0) / cb.DURATION::FLOAT) >= 0.3 THEN 9
+        WHEN (COALESCE(cpc.TOTAL_CLAIMS, 0) / cb.DURATION::FLOAT) >= 0.1 THEN 4
         ELSE 0
     END AS claim_frequency_points,
 
     -- ============================================================
-    -- Factor 3: Claim recency (max 16 pts) — weight increased from 12,
-    -- see header note: shifted from the near-constant warranty factor.
+    -- Factor 3: Claim recency (max 16 pts)
     -- ============================================================
     CASE
-        WHEN COALESCE(cpc.claims_last_90d, 0) >= 2 THEN 16
-        WHEN COALESCE(cpc.claims_last_90d, 0) = 1  THEN 8
+        WHEN COALESCE(cpc.CLAIMS_LAST_90D, 0) >= 2 THEN 16
+        WHEN COALESCE(cpc.CLAIMS_LAST_90D, 0) = 1  THEN 8
         ELSE 0
     END AS claim_recency_points,
 
     -- ============================================================
-    -- Factor 4: Written-off job ratio (max 14 pts) — weight increased
-    -- from 10, see header note: shifted from the near-constant coverage
-    -- gap factor. ASSUMPTION STILL FLAGGED: treats a written-off job as
-    -- unresolved, not neutral — business meaning of JOBWRITTENOFF is
-    -- still unconfirmed.
+    -- Factor 4: Written-off job ratio (max 14 pts)
+    -- ASSUMPTION FLAGGED: treats a written-off job as unresolved, not
+    -- neutral — business meaning of JOBWRITTENOFF still unconfirmed.
     -- ============================================================
     CASE
-        WHEN COALESCE(spc.total_service_jobs, 0) = 0 THEN 0
-        WHEN (spc.written_off_jobs / spc.total_service_jobs::FLOAT) > 0.25 THEN 14
-        WHEN (spc.written_off_jobs / spc.total_service_jobs::FLOAT) > 0    THEN 7
+        WHEN COALESCE(spc.TOTAL_SERVICE_JOBS, 0) = 0 THEN 0
+        WHEN (spc.WRITTEN_OFF_JOBS / spc.TOTAL_SERVICE_JOBS::FLOAT) > 0.25 THEN 14
+        WHEN (spc.WRITTEN_OFF_JOBS / spc.TOTAL_SERVICE_JOBS::FLOAT) > 0    THEN 7
         ELSE 0
     END AS written_off_ratio_points,
 
     -- ============================================================
-    -- Factor 5: Coverage gap (max 6 pts) — weight REDUCED from 8. This
-    -- was one of the two factors identified as likely near-constant
-    -- across the book (see header note) — pending confirmation via the
-    -- real SERVICEGEN split.
+    -- Factor 5: Coverage gap (max 6 pts)
     -- ============================================================
     CASE WHEN cb.SERVICEGEN = FALSE THEN 6 ELSE 0 END AS coverage_gap_points,
 
     -- ============================================================
-    -- Factor 6: Equipment age (max 13 pts)
-    -- PLACEHOLDER BANDS.
+    -- Factor 6: Equipment age (max 13 pts) — PLACEHOLDER BANDS.
     -- ============================================================
     CASE
         WHEN eq.equipment_age_years >= 8 THEN 13
@@ -255,58 +234,46 @@ SELECT
     END AS equipment_age_points,
 
     -- ============================================================
-    -- Factor 7: Warranty status (max 6 pts) — weight REDUCED from 12.
-    -- This was the single biggest driver of the score-clustering problem
-    -- (see header note): being out of warranty is likely near-universal
-    -- across a mature contract book, so this factor was consuming 12% of
-    -- the model's weight to say the same thing about nearly everyone.
-    -- No warranty record at all is still treated the same as "not under
-    -- warranty" (a separate flagged assumption, collapses a real
-    -- distinction between "expired" and "never had one on record").
+    -- Factor 7: Warranty status (max 6 pts)
+    -- No warranty record at all is treated the same as "not under
+    -- warranty" (flagged assumption).
     -- ============================================================
     CASE WHEN COALESCE(ws.is_under_warranty, 0) = 0 THEN 6 ELSE 0 END AS warranty_status_points,
 
     -- ============================================================
-    -- Factor 8: Price increase magnitude (max 10 pts) — NEW
-    -- DIRECTION FLAGGED AS AN ASSUMPTION, NOT A CONFIRMED BUSINESS RULE:
-    -- scores a LARGER recent price increase as MORE risk (sticker-shock
-    -- churn risk), the more standard retention-risk interpretation. This
-    -- is a genuine judgment call, not read off any confirmed source —
-    -- confirm the direction with the business before trusting it.
+    -- Factor 8: Price increase magnitude (max 10 pts)
+    -- DIRECTION FLAGGED AS AN ASSUMPTION, not a confirmed business rule.
     -- ============================================================
     CASE
-        WHEN pt.price_increase_pct IS NULL THEN 0
-        WHEN pt.price_increase_pct > 0.10  THEN 10
-        WHEN pt.price_increase_pct > 0.05  THEN 6
-        WHEN pt.price_increase_pct > 0     THEN 3
+        WHEN pt.PRICE_INCREASE_PCT IS NULL THEN 0
+        WHEN pt.PRICE_INCREASE_PCT > 0.10  THEN 10
+        WHEN pt.PRICE_INCREASE_PCT > 0.05  THEN 6
+        WHEN pt.PRICE_INCREASE_PCT > 0     THEN 3
         ELSE 0
     END AS price_increase_points,
 
     -- ============================================================
     -- TOTAL: sum of the 8 factors above, weights sum to 100 at max
-    -- (20+15+16+14+6+13+6+10 = 100) — rebalanced from v2's
-    -- 20+15+12+10+8+13+12+10 to shift weight off the two near-constant
-    -- factors (warranty, coverage gap) onto the two that reflect current
-    -- behavior (recency, written-off ratio). See header note.
+    -- (20+15+16+14+6+13+6+10 = 100)
     -- ============================================================
     LEAST(100, GREATEST(0,
-        LEAST(20, GREATEST(0, (COALESCE(rf.max_repeat_count, 1) - 1) * 4))
-        + (CASE WHEN (COALESCE(cpc.total_claims, 0) / cb.DURATION::FLOAT) >= 0.6 THEN 15
-                WHEN (COALESCE(cpc.total_claims, 0) / cb.DURATION::FLOAT) >= 0.3 THEN 9
-                WHEN (COALESCE(cpc.total_claims, 0) / cb.DURATION::FLOAT) >= 0.1 THEN 4 ELSE 0 END)
-        + (CASE WHEN COALESCE(cpc.claims_last_90d, 0) >= 2 THEN 16
-                WHEN COALESCE(cpc.claims_last_90d, 0) = 1  THEN 8 ELSE 0 END)
-        + (CASE WHEN COALESCE(spc.total_service_jobs, 0) = 0 THEN 0
-                WHEN (spc.written_off_jobs / spc.total_service_jobs::FLOAT) > 0.25 THEN 14
-                WHEN (spc.written_off_jobs / spc.total_service_jobs::FLOAT) > 0    THEN 7 ELSE 0 END)
+        LEAST(20, GREATEST(0, (COALESCE(rf.REPEAT_FAULTS, 1) - 1) * 4))
+        + (CASE WHEN (COALESCE(cpc.TOTAL_CLAIMS, 0) / cb.DURATION::FLOAT) >= 0.6 THEN 15
+                WHEN (COALESCE(cpc.TOTAL_CLAIMS, 0) / cb.DURATION::FLOAT) >= 0.3 THEN 9
+                WHEN (COALESCE(cpc.TOTAL_CLAIMS, 0) / cb.DURATION::FLOAT) >= 0.1 THEN 4 ELSE 0 END)
+        + (CASE WHEN COALESCE(cpc.CLAIMS_LAST_90D, 0) >= 2 THEN 16
+                WHEN COALESCE(cpc.CLAIMS_LAST_90D, 0) = 1  THEN 8 ELSE 0 END)
+        + (CASE WHEN COALESCE(spc.TOTAL_SERVICE_JOBS, 0) = 0 THEN 0
+                WHEN (spc.WRITTEN_OFF_JOBS / spc.TOTAL_SERVICE_JOBS::FLOAT) > 0.25 THEN 14
+                WHEN (spc.WRITTEN_OFF_JOBS / spc.TOTAL_SERVICE_JOBS::FLOAT) > 0    THEN 7 ELSE 0 END)
         + (CASE WHEN cb.SERVICEGEN = FALSE THEN 6 ELSE 0 END)
         + (CASE WHEN eq.equipment_age_years >= 8 THEN 13
                 WHEN eq.equipment_age_years >= 4 THEN 7 ELSE 0 END)
         + (CASE WHEN COALESCE(ws.is_under_warranty, 0) = 0 THEN 6 ELSE 0 END)
-        + (CASE WHEN pt.price_increase_pct IS NULL THEN 0
-                WHEN pt.price_increase_pct > 0.10 THEN 10
-                WHEN pt.price_increase_pct > 0.05 THEN 6
-                WHEN pt.price_increase_pct > 0    THEN 3 ELSE 0 END)
+        + (CASE WHEN pt.PRICE_INCREASE_PCT IS NULL THEN 0
+                WHEN pt.PRICE_INCREASE_PCT > 0.10 THEN 10
+                WHEN pt.PRICE_INCREASE_PCT > 0.05 THEN 6
+                WHEN pt.PRICE_INCREASE_PCT > 0    THEN 3 ELSE 0 END)
     )) AS RISK_SCORE
 
 FROM contract_base cb
@@ -318,3 +285,4 @@ LEFT JOIN warranty_status       ws ON ws.UNITID      = cb.UNITID
 LEFT JOIN price_trend           pt ON pt.CONTRACTID  = cb.CONTRACTID
 LEFT JOIN annual_value          av ON av.CONTRACTID  = cb.CONTRACTID
 ORDER BY RISK_SCORE DESC;
+    
