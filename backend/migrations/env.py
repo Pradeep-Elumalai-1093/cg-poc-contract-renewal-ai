@@ -25,7 +25,7 @@ def schema_name(var: str, default: str) -> str:
 
 
 SCHEMA = schema_name("DB_SCHEMA", "ai_recommendations")
-URL = os.environ.get("DATABASE_URL")
+URL = "postgresql+psycopg://postgres:postgres@localhost:5432/uda_1325"
 if not URL:
     raise RuntimeError("DATABASE_URL is not set")
 

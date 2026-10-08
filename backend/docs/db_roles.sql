@@ -20,8 +20,19 @@ GRANT SELECT, INSERT ON
 TO ai_writer;
 -- What the job reads to decide what to process (views run with their owner's rights, so no access to app_data is needed):
 GRANT SELECT ON ai_recommendations.v_excluded_contracts TO ai_writer;
--- v_retention_options joins the contract table, so it exists only after the FIRST `python -m ingest`. Then run:
---   GRANT SELECT ON ai_recommendations.v_retention_options TO ai_writer;
+-- The batch log is driven only through these functions (they run with the owner's rights), so the role needs no
+-- UPDATE or INSERT on the log itself - it can read it, and cannot move a batch through its states out of order.
+GRANT SELECT ON ai_recommendations.ai_batch TO ai_writer;
+GRANT EXECUTE ON FUNCTION
+    ai_recommendations.ai_batch_create(uuid, text, uuid, text, jsonb, text, text, integer),
+    ai_recommendations.ai_batch_submitted(uuid, text), ai_recommendations.ai_batch_claim(text, text, interval),
+    ai_recommendations.ai_batch_finish(uuid, integer, integer, integer, integer),
+    ai_recommendations.ai_batch_fail(uuid, text), ai_recommendations.ai_batch_fail(text, text)
+TO ai_writer;
+-- v_retention_options, v_ai_work and v_ai_work_accounts join the contract table, so they exist only after the FIRST
+-- `python -m ingest`. Then run:
+--   GRANT SELECT ON ai_recommendations.v_retention_options, ai_recommendations.v_ai_work,
+--                   ai_recommendations.v_ai_work_accounts TO ai_writer;
 
 -- ---------------------------------------------------------------------------
 -- app_api: the FastAPI service.
@@ -32,6 +43,8 @@ GRANT SELECT, INSERT, UPDATE ON ai_recommendations.users, ai_recommendations.ctx
 GRANT SELECT, INSERT, DELETE ON ai_recommendations.user_ctx TO app_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.worklist_view TO app_api;   -- one saved view per user
 GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.user_exclusion_pref TO app_api;
+GRANT SELECT ON ai_recommendations.ai_batch TO app_api;                                   -- the admin screen reads the batch log
+GRANT SELECT, UPDATE ON ai_recommendations.ai_setting TO app_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.exclusion_set, ai_recommendations.exclusion_hit,
     ai_recommendations.retention_action, ai_recommendations.retention_action_match TO app_api;   -- users configure these; the matches are rebuilt by the app and the load
 GRANT SELECT, INSERT ON ai_recommendations.audit_log TO app_api;            -- append-only

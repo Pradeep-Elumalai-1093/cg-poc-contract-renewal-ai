@@ -33,7 +33,7 @@ pg.ingest_frames(DB, contracts, claims)
 
 def live_frame():
     d = pd.DataFrame(pg.query(DB, f"SELECT * FROM {D}.contract WHERE in_scope"))
-    for c in ("risk_score", "annual_contract_value", "claims_last_90d"):
+    for c in ("risk_score", "annual_contract_value", "claims_last_90d", "total_claims"):
         d[c] = pd.to_numeric(d[c], errors="coerce")
     d["end"] = pd.to_datetime(d["end_date_effective"])
     return d
@@ -254,6 +254,70 @@ with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(mai
     assert d_.status_code == 200 and pg.query(DB, f"SELECT count(*) AS n FROM {S}.retention_action_match WHERE action_id = CAST(%s AS uuid)", L1["id"])[0]["n"] == 0
     assert alice.post(f"/api/retention-actions/{L1['id']}/restore").status_code == 200
     print("ok - retention actions: admin-only globals, local override only on an exact (case-blind) match, clone-then-own, version conflicts, and the pipeline view equals an independent model")
+
+    # ---- D2. what the AI pipeline is told to do today (v_ai_work), against an independent model of the rules ---------------------
+    DUE = ("90", "60", "45", "30", "10")
+    live = LIVE[LIVE.ctxid.notna()]
+    due_ids = live[live.expiry_bucket.isin(DUE)].contractid.tolist()
+    ctx_of = dict(zip(live.contractid, live.ctxid))
+    last_ms = {cid: live[live.contractid == cid].expiry_bucket.iloc[0] for cid in due_ids[:20]}      # recommended for the bucket they are in now
+    last_ms.update({cid: ">90" for cid in due_ids[20:40]})                                            # recommended earlier, for a previous bucket
+    pg.query(DB, f"INSERT INTO {S}.contract_recommendation (contractid, ctx, ai_recommendation, milestone) VALUES " +
+             ",".join(f"('{cid}', '{ctx_of[cid]}', 'x', '{ms}')" for cid, ms in last_ms.items()))
+    some = live.contractid.tolist()[:10]
+    for cid in some:
+        pg.query(DB, f"INSERT INTO {S}.contract_summary (contractid, ctx, ai_summary, input_hash) VALUES ('{cid}', '{ctx_of[cid]}', 's', 'h1')")
+    for cid in some[:5]:     # a second version: the view shows the LATEST hash
+        pg.query(DB, f"INSERT INTO {S}.contract_summary (contractid, ctx, ai_summary, input_hash) VALUES ('{cid}', '{ctx_of[cid]}', 's', 'h2')")
+    for cid in some[:3]:
+        pg.query(DB, f"INSERT INTO {S}.web_claims_summary (contractid, ctx, ai_summary, input_hash) VALUES ('{cid}', '{ctx_of[cid]}', 's', 'w1')")
+    acct = live.accountid.iloc[0]
+    pg.query(DB, f"INSERT INTO {S}.account_summary (accountid, ctx, ai_summary, input_hash) VALUES ('{acct}', '{live.ctxid.iloc[0]}', 's', 'a1')")
+    active_sets = [r["id"] for r in pg.query(DB, f"SELECT id FROM {S}.exclusion_set WHERE status = 'active' AND deleted_at IS NULL")]
+    excluded = set().union(*[hits_of(str(i)) for i in active_sets])
+    assert excluded, "the model needs some excluded contracts"
+
+    def expected(threshold):
+        out = {}
+        for _, c in live.iterrows():
+            cid = c.contractid
+            scope = bool(c.risk_score >= threshold) or c.expiry_bucket in DUE
+            due = c.expiry_bucket in DUE and last_ms.get(cid) != c.expiry_bucket
+            out[cid] = {"in_ai_scope": scope, "want_contract_summary": scope, "want_web_claims_summary": scope and c.total_claims > 0,
+                        "excluded": cid in excluded, "milestone_due": due, "has_options": bool(want[cid]),
+                        "want_recommendation": scope and cid not in excluded and due and bool(want[cid]),
+                        "last_milestone": last_ms.get(cid), "contract_summary_hash": {**{x: "h2" for x in some[:5]}, **{x: "h1" for x in some[5:]}}.get(cid),
+                        "web_claims_summary_hash": "w1" if cid in some[:3] else None}
+        return out
+
+    def check_work(threshold):
+        rows = {r["contractid"]: r for r in pg.query(DB, f"SELECT * FROM {S}.v_ai_work")}
+        model = expected(threshold)
+        assert set(rows) == set(model), "v_ai_work should list exactly the live contracts that have an area"
+        for cid, want_ in model.items():
+            got = {k: rows[cid][k] for k in want_}
+            assert got == want_, (cid, got, want_)
+        return model
+
+    model = check_work(50)
+    kinds = {"recommend": sum(m["want_recommendation"] for m in model.values()),
+             "excluded_but_due": sum(m["excluded"] and m["milestone_due"] and m["in_ai_scope"] for m in model.values()),
+             "due_without_options": sum(m["milestone_due"] and m["in_ai_scope"] and not m["has_options"] for m in model.values()),
+             "already_recommended_for_this_bucket": sum(m["in_ai_scope"] and not m["milestone_due"] and m["last_milestone"] is not None for m in model.values())}
+    assert all(v > 0 for v in kinds.values()), f"every rule should be exercised by the data: {kinds}"
+    assert not any(r["excluded"] for r in pg.query(DB, f"SELECT excluded FROM {S}.v_ai_work WHERE want_recommendation"))
+    pg.query(DB, f"UPDATE {S}.ai_setting SET value = '70' WHERE key = 'summary_risk_threshold'")        # an admin raises the bar: no deployment needed
+    assert sum(m["in_ai_scope"] for m in check_work(70).values()) < sum(m["in_ai_scope"] for m in model.values())
+    pg.query(DB, f"UPDATE {S}.ai_setting SET value = '50' WHERE key = 'summary_risk_threshold'")
+    accts = {r["accountid"]: r for r in pg.query(DB, f"SELECT * FROM {S}.v_ai_work_accounts")}
+    mine = live.assign(s=live.contractid.map(lambda x: model[x]["in_ai_scope"])).groupby("accountid").s.sum()
+    assert set(accts) == set(mine[mine > 0].index) and all(accts[a]["contracts_in_scope"] == mine[a] for a in accts)
+    assert accts[acct]["account_summary_hash"] == "a1"
+    ids_ = [pg.query(DB, f"SELECT {S}.ai_batch_create(gen_random_uuid(), '{t}', NULL, 'm', '{{}}', 's3://i', 's3://o', 5) AS id")[0]["id"] for t in ("contract_summary", "recommendation")]
+    shown = boss.get("/api/admin/batches").json()
+    assert {b["id"] for b in shown} >= {str(i) for i in ids_} and all(b["status"] == "created" for b in shown)
+    assert alice.get("/api/admin/batches").json()["detail"] == "admin_required"
+    print(f"ok - AI work list: {len(model)} contracts match an independent model of the rules ({kinds}); hashes show the latest version; the threshold is a setting; the batch log is visible to admins")
 
     # ---- E. a new data load recomputes every rule's matches --------------------------------------------------------------------
     before = hits_of(A["id"])

@@ -85,7 +85,8 @@ def ensure_parent(cur, D: str, table: str, columns: list[tuple[str, str]], rebui
 
 
 def ensure_views(cur, D: str, S: str) -> None:
-    """What the AI pipeline reads: for every live contract, the retention actions it may be given.
+    """What the AI pipeline reads: v_retention_options (for every live contract, the retention actions it may be given),
+    then v_ai_work and v_ai_work_accounts (what each contract and account needs today).
     A global action applies everywhere unless the contract's area has a local action with the same
     category, sub-category and name; an action with criteria applies only to the contracts it matched.
     It joins the contract table, so it lives here (created after the table exists, kept by every load)."""
@@ -100,6 +101,41 @@ WHERE c.in_scope AND c.ctxid IS NOT NULL
         SELECT 1 FROM "{S}".retention_action l WHERE l.scope = 'local' AND l.ctx = c.ctxid AND l.deleted_at IS NULL
           AND lower(btrim(l.category)) = lower(btrim(a.category)) AND lower(btrim(l.sub_category)) = lower(btrim(a.sub_category))
           AND lower(btrim(l.name)) = lower(btrim(a.name))))""")
+    # The daily work list for the AI pipeline: one row per live contract, with what it needs. The rules live here,
+    # once; the job only adds the one thing the database cannot know - whether its freshly built inputs differ from
+    # the stored ones (input_hash), which is what makes a summary regenerate on change and not every day.
+    cur.execute(f"""
+CREATE OR REPLACE VIEW "{S}".v_ai_work AS
+WITH base AS (
+  SELECT c.contractid, c.accountid, c.ctxid AS ctx, c.expiry_bucket, c.risk_score, c.segment, c.total_claims,
+         (c.risk_score >= coalesce((SELECT value::integer FROM "{S}".ai_setting WHERE key = 'summary_risk_threshold'), 50)
+          OR c.expiry_bucket IN ('90', '60', '45', '30', '10')) AS in_ai_scope,
+         cs.input_hash AS contract_summary_hash, ws.input_hash AS web_claims_summary_hash,
+         r.milestone AS last_milestone, ex.set_names AS excluded_by,
+         (c.expiry_bucket IN ('90', '60', '45', '30', '10') AND r.milestone IS DISTINCT FROM c.expiry_bucket) AS milestone_due,
+         EXISTS (SELECT 1 FROM "{S}".v_retention_options o WHERE o.contractid = c.contractid) AS has_options
+  FROM "{D}".contract c
+  LEFT JOIN "{S}".contract_summary cs ON cs.system = 'ecare' AND cs.language = 'en' AND cs.is_latest AND cs.contractid = c.contractid
+  LEFT JOIN "{S}".web_claims_summary ws ON ws.system = 'ecare' AND ws.language = 'en' AND ws.is_latest AND ws.contractid = c.contractid
+  LEFT JOIN "{S}".contract_recommendation r ON r.system = 'ecare' AND r.language = 'en' AND r.is_latest AND r.contractid = c.contractid
+  LEFT JOIN "{S}".v_excluded_contracts ex ON ex.contractid = c.contractid
+  WHERE c.in_scope AND c.ctxid IS NOT NULL)
+SELECT *,
+       in_ai_scope AS want_contract_summary,
+       (in_ai_scope AND coalesce(total_claims, 0) > 0) AS want_web_claims_summary,
+       (excluded_by IS NOT NULL) AS excluded,
+       -- a recommendation only when the contract has reached an expiry bucket it hasn't been recommended for, is not
+       -- excluded, and there is at least one retention action to choose from
+       (in_ai_scope AND excluded_by IS NULL AND milestone_due AND has_options) AS want_recommendation
+FROM base""")
+    cur.execute(f"""
+CREATE OR REPLACE VIEW "{S}".v_ai_work_accounts AS
+SELECT w.accountid, w.ctx, count(*) FILTER (WHERE w.in_ai_scope) AS contracts_in_scope, a.input_hash AS account_summary_hash
+FROM "{S}".v_ai_work w
+LEFT JOIN "{S}".account_summary a ON a.system = 'ecare' AND a.language = 'en' AND a.is_latest AND a.accountid = w.accountid
+WHERE w.accountid IS NOT NULL
+GROUP BY w.accountid, w.ctx, a.input_hash
+HAVING count(*) FILTER (WHERE w.in_ai_scope) > 0""")
 
 
 def _copy(cur, D: str, table: str, df, columns: list[str]) -> None:

@@ -70,9 +70,71 @@ older rows stay as history.
      local one with the same category, sub-category and name; an action with conditions appears only for the
      contracts it matches. A live contract with no rows here has nothing to recommend.
    Both are refreshed by the daily load (`python -m ingest` recomputes every rule's matches right after it), so
-   the job must run after the load has finished (check `app_data.ingest_run` for today's `succeeded` run).
+   the job should run after the load has finished (or accept that it works from the previous load).
 5. **Concurrent writers are safe.** Twelve simultaneous inserts for one key become versions 1 to 12
    with an unbroken chain and no errors.
+
+## The daily run: one batch job per result table
+
+| `job_type` | Stores into | Works from |
+|---|---|---|
+| `contract_summary` | `contract_summary` | `v_ai_work` where `want_contract_summary` |
+| `web_claims_summary` | `web_claims_summary` | `v_ai_work` where `want_web_claims_summary` |
+| `account_summary` | `account_summary` | `v_ai_work_accounts` |
+| `recommendation` | `contract_recommendation` | `v_ai_work` where `want_recommendation`, choosing from `v_retention_options` |
+| `evaluation`, `draft` | the `evaluation` and `draft_content` of that recommendation | the output of the earlier pass (`parent_batch_id`) |
+
+**A recommendation row is written once, after its last pass.** The job's role cannot `UPDATE`, and a row is a version,
+so do not insert the recommendation and fill its evaluation and draft in later. Keep the earlier passes' results in S3,
+chain the next batch from them, and insert the finished row (recommendation, `evaluation`, `draft_content`) after the
+final pass.
+
+### What the work-list views say
+
+`v_ai_work` has one row per live contract that has an area. The rules are in the view, once; the job adds only what the
+database cannot know: whether its freshly built inputs differ from the stored ones.
+
+| Column | Meaning |
+|---|---|
+| `in_ai_scope` | Risk score at or above `ai_setting.summary_risk_threshold` (default 50, admin-adjustable), or in an expiry bucket of 90 days or less |
+| `want_contract_summary`, `want_web_claims_summary` | In scope (and, for the web-claims summary, the contract has claims) |
+| `contract_summary_hash`, `web_claims_summary_hash` | `input_hash` of the latest stored summary, or null. **Build the inputs, hash them, and send the contract to the model only if the hash differs or is null** - that is "regenerate when the inputs change" |
+| `milestone_due` | The contract is in a 90/60/45/30/10 bucket and has not been recommended for that bucket (`last_milestone`) |
+| `excluded`, `excluded_by` | An active exclusion set of its area matches it. It still gets its summaries, never a recommendation |
+| `has_options` | At least one retention action may be chosen for it |
+| `want_recommendation` | in scope, not excluded, `milestone_due`, and `has_options` |
+
+`v_ai_work_accounts` has one row per account with at least one in-scope contract, with `account_summary_hash`.
+A custom risk-based trigger for recommendations is not defined yet; until it is, a recommendation is made only when a
+contract reaches a new expiry bucket.
+
+**Freshness.** If the batch runs before the daily load, the views describe the previous load: contracts, expiry buckets
+and the matches of exclusion sets and retention actions are one day old.
+
+### The batch log (`ai_batch`) - how a batch is started, finished and never written twice
+
+Drive it only through these functions (the role has no `INSERT`/`UPDATE` on the table). `run_id` is one uuid per daily
+trigger.
+
+**Lambda 1**, per job type:
+
+1. Build the input file; for each contract compute `input_hash` and skip it if unchanged (above).
+2. `ai_batch_create(run_id, job_type, parent_batch_id, model_id, prompt_versions, input_s3_uri, output_s3_uri, records_requested)`
+   returns the batch id. Calling it again for the same `(run_id, job_type)` returns the **same** id, so a retried Lambda
+   does not start a second job.
+3. Start the Bedrock job, then `ai_batch_submitted(batch_id, job_arn)`. If anything fails first: `ai_batch_fail(batch_id, error)`.
+
+**Lambda 2**, on the Bedrock completion event:
+
+1. `batch_id = ai_batch_claim(job_arn, <this invocation's id>)`. **If it returns NULL, stop**: this is a duplicate event,
+   or the batch is already written or failed. Of any number of simultaneous deliveries exactly one gets the id.
+2. Read the S3 output and `INSERT` the results (versioning is automatic). Skip a result whose `input_hash` equals the
+   latest stored one, so a re-run never creates duplicate versions.
+3. `ai_batch_finish(batch_id, records_returned, records_written, records_skipped, records_failed)`.
+4. On a Bedrock `Failed` or `Stopped` event: `ai_batch_fail(job_arn, message)`.
+
+A claim held for more than 15 minutes is treated as a crashed invocation and can be taken over (this is safe because of
+step 2). A written batch is never reopened or marked failed. Admins see the log at `GET /api/admin/batches`.
 
 ## Example
 
@@ -109,10 +171,6 @@ VALUES
 
 ## To agree before the job is built
 
-- Which contracts need a summary, and which need a recommendation (the work-queue view `v_ai_work`): this depends on
-  the rules below being settled.
-
-- The exact columns of `app_data.v_ai_work` (proposed: system, contractid, accountid, ctx, needs_summary,
-  needs_recommendation, excluded_by, input hash of the current source data).
+- The custom risk-based trigger for recommendations (deferred).
 - The source of `jde_customer_id` (not a column of the Contract data product).
-- Whether `retention_action_id` stays null until retention actions are configurable.
+- Translation: `language` exists on every table, but no job or work-list column drives it yet.

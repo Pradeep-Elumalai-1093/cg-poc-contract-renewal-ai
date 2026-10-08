@@ -226,6 +226,57 @@ try:
         denied(w, f"SELECT * FROM {S}.users")
         denied(w, f"SELECT * FROM {S}.audit_log")
         denied(w, f"INSERT INTO {S}.users (oid, email) VALUES ('x', 'x')")
+    # the batch log: created and driven through the functions only, by the job's own role
+    run_id = str(uuid.uuid4())
+
+    def fn(c, sql, *params):
+        return list(c.execute(f"SELECT {sql} AS v", params).fetchone().values())[0]
+
+    CREATE = f"{S}.ai_batch_create(CAST(%s AS uuid), %s, CAST(%s AS uuid), 'model-x', CAST(%s AS jsonb), 's3://in', 's3://out', 100)"
+    with as_role("ai_writer") as w2:
+        b1 = fn(w2, CREATE, run_id, "contract_summary", None, '{"prompt": "v1"}')
+        assert fn(w2, CREATE, run_id, "contract_summary", None, '{}') == b1, "a retried 'start' must return the same batch"
+        b_acc = fn(w2, CREATE, run_id, "account_summary", None, '{}')
+        b_eval = fn(w2, CREATE, run_id, "evaluation", str(b1), '{}')          # a follow-on pass reads an earlier job's output
+        assert len({b1, b_acc, b_eval}) == 3
+        try:
+            fn(w2, CREATE, run_id, "something_else", None, '{}')
+            raise AssertionError("an unknown job type should be refused")
+        except errors.CheckViolation:
+            pass
+        assert fn(w2, f"{S}.ai_batch_claim('arn:1', 'early')") is None, "nothing to claim before the job was submitted"
+        assert fn(w2, f"{S}.ai_batch_submitted(CAST(%s AS uuid), 'arn:1')", str(b1)) is True
+        assert fn(w2, f"{S}.ai_batch_submitted(CAST(%s AS uuid), 'arn:other')", str(b1)) is False
+
+    # the same completion event delivered twelve times at once: exactly one invocation may write
+    winners, barrier = [], threading.Barrier(12)
+
+    def deliver(i):
+        with as_role("ai_writer") as c:
+            barrier.wait()
+            winners.append(fn(c, f"{S}.ai_batch_claim('arn:1', %s)", f"lambda-{i}"))
+
+    ts = [threading.Thread(target=deliver, args=(i,)) for i in range(12)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert [x for x in winners if x is not None] == [b1] and winners.count(None) == 11, winners
+    with as_role("ai_writer") as w2:
+        assert fn(w2, f"{S}.ai_batch_claim('arn:1', 'late-duplicate')") is None                      # a duplicate after the claim
+        assert fn(w2, f"{S}.ai_batch_claim('arn:1', 'rescuer', interval '0')") == b1                 # a crashed holder's lease can be taken over
+        assert fn(w2, f"{S}.ai_batch_finish(CAST(%s AS uuid), 100, 90, 10, 0)", str(b1)) is True
+        assert fn(w2, f"{S}.ai_batch_finish(CAST(%s AS uuid), 100, 90, 10, 0)", str(b1)) is False     # only once
+        assert fn(w2, f"{S}.ai_batch_claim('arn:1', 'after-written', interval '0')") is None           # a written batch is never reopened
+        assert fn(w2, f"{S}.ai_batch_fail('arn:1', 'late failure event')") is False                    # ...nor un-written
+        assert fn(w2, f"{S}.ai_batch_submitted(CAST(%s AS uuid), 'arn:2')", str(b_acc)) is True
+        assert fn(w2, f"{S}.ai_batch_fail('arn:2', 'ThrottlingException')") is True
+        assert fn(w2, f"{S}.ai_batch_claim('arn:2', 'w')") is None                                    # a failed batch is not written
+        got = w2.execute(f"SELECT status, claimed_by, records_written, records_skipped FROM {S}.ai_batch WHERE id = %s", (b1,)).fetchone()
+        assert got == {"status": "written", "claimed_by": "rescuer", "records_written": 90, "records_skipped": 10}, got
+        assert w2.execute(f"SELECT status, error FROM {S}.ai_batch WHERE id = %s", (b_acc,)).fetchone() == {"status": "failed", "error": "ThrottlingException"}
+        denied(w2, f"UPDATE {S}.ai_batch SET status = 'written'")                                     # the log moves only through the functions
+        denied(w2, f"DELETE FROM {S}.ai_batch")
+        denied(w2, f"INSERT INTO {S}.ai_batch (run_id, job_type) VALUES (gen_random_uuid(), 'draft')")
+
     with as_role("app_api") as a_:
         a_.execute(f"UPDATE {S}.contract_recommendation SET outcome = 'Engaged' WHERE contractid = 'ROLE1' AND is_latest")
         a_.execute(f"INSERT INTO {S}.audit_log (action, entity) VALUES ('t', 't')")
@@ -239,9 +290,11 @@ finally:
         # roles are cluster-wide, so clean up (the database itself is dropped on exit)
         c.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA {S} FROM ai_writer_{suffix}, app_api_{suffix}")
         c.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA app_data FROM ai_writer_{suffix}, app_api_{suffix}")
+        c.execute(f"REVOKE ALL ON ALL FUNCTIONS IN SCHEMA {S} FROM ai_writer_{suffix}, app_api_{suffix}")
         c.execute(f"REVOKE ALL ON SCHEMA {S}, app_data FROM ai_writer_{suffix}, app_api_{suffix}")
         c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA app_data REVOKE SELECT ON TABLES FROM app_api_{suffix}")
         c.execute(f"DROP ROLE ai_writer_{suffix}"); c.execute(f"DROP ROLE app_api_{suffix}")
 print("ok - docs/db_roles.sql: the writer can only INSERT versions (no UPDATE/DELETE, no users/audit); the API's audit log is append-only")
+print("ok - batch log: retries return the same batch; of 12 simultaneous duplicate events exactly one wins; stale claims can be taken over; written and failed batches never reopen")
 
 print("ALL SCHEMA CHECKS PASSED")

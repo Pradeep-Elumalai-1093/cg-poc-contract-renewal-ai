@@ -10,11 +10,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from auth import admin_user
-from db import AuditLog, Ctx, User, UserCtx, audit, get_db, iso, live_contract_counts, reconcile_status, sync_ctx_codes
+from db import SCHEMA, AuditLog, Ctx, User, UserCtx, audit, get_db, iso, live_contract_counts, reconcile_status, sync_ctx_codes
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_user)])
 
@@ -125,6 +125,21 @@ def set_disabled(user_id: UUID, body: DisableIn, actor: User = Depends(admin_use
           detail={"email": user.email, "status": [previous, user.status]})
     db.commit()
     return _user_row(user)
+
+
+@router.get("/batches")
+def list_batches(limit: int = 50, db: Session = Depends(get_db)):
+    """The AI pipeline's batch log, newest first - so a stuck or failed batch is visible without database access."""
+    rows = db.execute(text(f"""
+        SELECT id, run_id, job_type, parent_batch_id, status, bedrock_job_arn, model_id, records_requested, records_returned,
+               records_written, records_skipped, records_failed, error, created_at, submitted_at, finished_at,
+               round(extract(epoch FROM (coalesce(finished_at, now()) - created_at)) / 60) AS minutes
+        FROM "{SCHEMA}".ai_batch ORDER BY created_at DESC, id DESC LIMIT :n"""), {"n": max(1, min(limit, 200))}).mappings().all()
+    return [{"id": str(r["id"]), "runId": str(r["run_id"]), "jobType": r["job_type"], "parentId": str(r["parent_batch_id"]) if r["parent_batch_id"] else None,
+             "status": r["status"], "jobArn": r["bedrock_job_arn"], "model": r["model_id"], "requested": r["records_requested"],
+             "returned": r["records_returned"], "written": r["records_written"], "skipped": r["records_skipped"], "failed": r["records_failed"],
+             "error": r["error"], "createdAt": iso(r["created_at"]), "submittedAt": iso(r["submitted_at"]), "finishedAt": iso(r["finished_at"]),
+             "minutes": int(r["minutes"] or 0)} for r in rows]
 
 
 @router.get("/ctx")
