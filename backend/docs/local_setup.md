@@ -120,6 +120,12 @@ ECS/Fargate scheduled task, a CI job) with the `.env` values as environment vari
   and column headers.
 - Contact details (address, phone ...) are loaded but only sent when a user clicks "Show contact details" in a
   contract's Details tab; each request is written to the audit trail.
+- **Exclusions** and **Retention Actions** are configured in their own tabs. Everyone with an area manages that area's
+  exclusion sets and local actions; global actions are admin-only. After each load, `python -m ingest` recomputes
+  what every active rule matches (exit code 3 means the data is live but that step failed). Each user chooses, in the
+  filter bar, which active sets hide contracts from their own screens; the AI pipeline skips the recommendation for
+  any contract matching any active set of its area. A set that would exclude more than `EXCLUSION_CONFIRM_SHARE`
+  (default 0.3) of an area asks for confirmation.
 - A new data load while someone is scrolling shows "New data has been loaded" with a Refresh button.
 - Checks (need PostgreSQL running, nothing else): `python tests/check_ingest.py`, `check_worklist.py`,
   `check_schema.py`, `check_access.py`, `check_sso.py`. Point `TEST_PG_ADMIN_DSN` at your server if it isn't

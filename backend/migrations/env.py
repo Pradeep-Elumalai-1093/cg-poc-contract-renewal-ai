@@ -10,6 +10,10 @@ import re
 from alembic import context
 from sqlalchemy import create_engine, pool, text
 
+from dotenv import load_dotenv
+load_dotenv()  # before the rules modules read their settings
+
+
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 

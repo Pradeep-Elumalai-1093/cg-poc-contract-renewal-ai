@@ -69,7 +69,7 @@ def query(url: str, sql: str, *params):
         return cur.fetchall() if cur.description else []
 
 
-def ingest_frames(url: str, contracts, claims=None) -> None:
+def ingest_frames(url: str, contracts, claims=None, expect: int = 0) -> None:
     """Writes the frames to CSV and runs the real ingest command against url."""
     import contextlib
     import io
@@ -95,7 +95,7 @@ def ingest_frames(url: str, contracts, claims=None) -> None:
         os.environ["DATABASE_URL"] = previous if previous is not None else ""
         if previous is None:
             os.environ.pop("DATABASE_URL")
-    assert code == 0, (out.getvalue(), err.getvalue())
+    assert code == expect, (code, out.getvalue(), err.getvalue())
 
 
 def load_contracts(url: str, rows: list[dict]) -> None:

@@ -44,7 +44,8 @@ older rows stay as history.
 
 | Column | Set by | Notes |
 |---|---|---|
-| `retention_action_id` | you | uuid of the configured retention action. Null until that table exists |
+| `retention_action_id` | you | The `action_id` of the retention action chosen, from `v_retention_options` (below) |
+| `milestone` | you | The expiry bucket this recommendation was made for: `'>90'`, `'90'`, `'60'`, `'45'`, `'30'`, `'10'` or `'Lost'`. Lets the pipeline recommend again only when a contract moves to the next bucket |
 | `retention_action_name` | you | Snapshot of the name, so history stays readable if the action is later edited |
 | `execution_owner`, `upsell` | you | As returned by the recommendation step |
 | `confidence` | you | 0 to 1 |
@@ -60,9 +61,16 @@ older rows stay as history.
    to real changes instead of one row per contract per day.
 3. **No personal data in `input_data` or `ai_configuration`.** That means address, postcode, county,
    phone, fax, vehicle id and contact names. These rows are stored as history and read back by the app.
-4. **Which contracts to process** comes from the work queue view `app_data.v_ai_work` (delivered with
-   the Snowflake ingestion). Summaries are for contracts that are at risk or expiring. **A contract in an
-   exclusion set must get its summaries but no `contract_recommendation` row.**
+4. **Exclusions and the menu of actions are configured by users in the app and read from here**
+   (PostgreSQL, not Snowflake):
+   - `v_excluded_contracts (contractid, ctx, set_ids, set_names)`: a contract listed here matches an ACTIVE
+     exclusion set of its area. **It must get its summaries but no `contract_recommendation` row.**
+   - `v_retention_options (contractid, ctx, action_id, scope, category, sub_category, name, description)`: the
+     retention actions the model may choose from for that contract. A global action is replaced in an area by a
+     local one with the same category, sub-category and name; an action with conditions appears only for the
+     contracts it matches. A live contract with no rows here has nothing to recommend.
+   Both are refreshed by the daily load (`python -m ingest` recomputes every rule's matches right after it), so
+   the job must run after the load has finished (check `app_data.ingest_run` for today's `succeeded` run).
 5. **Concurrent writers are safe.** Twelve simultaneous inserts for one key become versions 1 to 12
    with an unbroken chain and no errors.
 
@@ -100,6 +108,9 @@ VALUES
 | (none) | `input_hash` | Skip regenerating unchanged inputs |
 
 ## To agree before the job is built
+
+- Which contracts need a summary, and which need a recommendation (the work-queue view `v_ai_work`): this depends on
+  the rules below being settled.
 
 - The exact columns of `app_data.v_ai_work` (proposed: system, contractid, accountid, ctx, needs_summary,
   needs_recommendation, excluded_by, input hash of the current source data).

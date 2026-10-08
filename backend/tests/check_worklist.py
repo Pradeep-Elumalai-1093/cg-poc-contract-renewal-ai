@@ -183,7 +183,7 @@ with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(mai
     assert r.json()["columns"] == ["ctxid", "company", "end_date_effective"], r.text          # stored in catalog order
     rows = alice.get("/api/worklist").json()["rows"]                                             # no sort param: the saved sort applies
     assert [x["company"] for x in rows] == sorted(x["company"] for x in rows)
-    assert set(rows[0]) == {"id", "rec", "contractid", "risk_score", "segment", "ctxid", "company", "end_date_effective"}, set(rows[0])
+    assert set(rows[0]) == {"id", "rec", "excl", "contractid", "risk_score", "segment", "ctxid", "company", "end_date_effective"}, set(rows[0])
     assert bob.get("/api/me/worklist-view").json()["columns"] == worklist.DEFAULT_COLUMNS       # one view per user
     assert alice.put("/api/me/worklist-view", json={"columns": worklist.AVAILABLE[:13]}).status_code == 400
     assert alice.put("/api/me/worklist-view", json={"columns": ["company"], "sort": {"key": "vehicleid", "dir": "asc"}}).status_code == 400

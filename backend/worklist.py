@@ -129,6 +129,20 @@ def _search_sql(q: str) -> tuple[str, dict]:
             {"s_like": f"%{_like_escape(q.lower())}%", "s_pre": f"{_like_escape(q)}%"})
 
 
+def _hide_sql(session: Session, user: User) -> tuple[str, dict]:
+    """SQL (over contract alias c) that is true for a contract THIS user has chosen to hide: matched by an
+    active exclusion set - any of them (the default), only the ones they picked, or none. A contract
+    matching several sets is one contract: EXISTS, never a join, so overlaps count once."""
+    r = _run(session, f'SELECT mode, set_ids FROM "{S}".user_exclusion_pref WHERE user_id = CAST(:u AS uuid)', {"u": str(user.id)}).first()
+    mode, ids = (r[0], [str(i) for i in r[1]]) if r else ("all", [])
+    if mode == "none" or (mode == "custom" and not ids):
+        return "FALSE", {}
+    pick = " AND s.id = ANY(CAST(:excl_ids AS uuid[]))" if mode == "custom" else ""
+    sql = (f'EXISTS (SELECT 1 FROM "{S}".exclusion_hit h JOIN "{S}".exclusion_set s ON s.id = h.set_id '
+           f"AND s.status = 'active' AND s.deleted_at IS NULL{pick} WHERE h.contractid = c.contractid)")
+    return sql, ({"excl_ids": ids} if mode == "custom" else {})
+
+
 # ---- the caller's saved view -------------------------------------------------------------------
 def _view(session: Session, user: User) -> dict:
     row = session.get(db.WorklistView, user.id)
@@ -232,8 +246,9 @@ def get_worklist(
     st, sp = _static_filters(f)
     dy, dp = _dynamic_filters(f, EXPR_C)
     sq, qp = _search_sql(q)
-    base_params = {**sp, **dp, **qp}
-    base_where = f"TRUE{st}{dy}{sq}"
+    hide, hp = _hide_sql(session, user)
+    base_params = {**sp, **dp, **qp, **hp}
+    base_where = f"TRUE{st}{dy}{sq} AND NOT ({hide})"
 
     op, o = (">", "ASC") if direction == "asc" else ("<", "DESC")
     type_ = SORTABLE[sort].sql_type
@@ -262,10 +277,14 @@ def get_worklist(
         SELECT contractid, retention_action_name, action_status, outcome, (evaluation ->> 'pass') = 'false' AS escalated
         FROM "{S}".contract_recommendation
         WHERE system = '{SYSTEM}' AND language = '{LANG}' AND is_latest AND contractid = ANY(:ids)""", {"ids": ids}).mappings()}
+    excl = {r[0]: r[1] for r in _run(session, f"""
+        SELECT h.contractid, array_agg(s.name ORDER BY s.name) FROM "{S}".exclusion_hit h
+        JOIN "{S}".exclusion_set s ON s.id = h.set_id AND s.status = 'active' AND s.deleted_at IS NULL
+        WHERE h.contractid = ANY(:ids) GROUP BY h.contractid""", {"ids": ids}).all()}   # shown on a row when its sets are not hiding it
     out = []
     for r in rows:
         rec = recs.get(r["contractid"])
-        out.append({"id": r["contractid"], **{c: r[c] for c in columns},
+        out.append({"id": r["contractid"], "excl": excl.get(r["contractid"], []), **{c: r[c] for c in columns},
                     "rec": {"name": rec["retention_action_name"], "status": rec["action_status"], "outcome": rec["outcome"],
                             "escalated": bool(rec["escalated"])} if rec else None})
     nxt = None
@@ -282,11 +301,12 @@ _LOST = "(bucket = 'Lost' OR outcome = 'Declined')"
 @router.get("/api/summary")
 def get_summary(
     f: dict = Depends(get_filters),
+    user: User = Depends(active_user),
     scope: Scope = Depends(get_scope),
     session: Session = Depends(db.get_db),
 ):
     ctxs, include_null = _scope_ctxs(session, scope, f["area"])
-    empty = {"kpis": {"contracts": 0, "customers": 0, "value": 0, "segments": {s: 0 for s in SEGMENTS}, "lostCount": 0, "lostValue": 0,
+    empty = {"excluded": 0, "kpis": {"contracts": 0, "customers": 0, "value": 0, "segments": {s: 0 for s in SEGMENTS}, "lostCount": 0, "lostValue": 0,
                       "atRiskValue": 0, "convertedValue": 0, "actionsNeeded": 0, "responseRate": None},
              "buckets": {b: 0 for b in BUCKETS}, "heat": [], "byCtx": [], "campaigns": [],
              "outcomeByRisk": {"buckets": ["0-19", "20-39", "40-59", "60-79", "80-100"], "engaged": [0] * 5, "notEngaged": [0] * 5,
@@ -297,13 +317,17 @@ def get_summary(
     main_dy, mp = _dynamic_filters(f, EXPR_BASE)
     nob_dy, _ = _dynamic_filters(f, EXPR_BASE, skip=("bucket",))
     nohm_dy, _ = _dynamic_filters(f, EXPR_BASE, skip=("rb", "vb"))
+    hide, hp = _hide_sql(session, user)
+    kept = " AND NOT hide"      # contracts this user's exclusions hide are left out of every figure, and counted separately
+    main_all = main_dy
+    main_dy, nob_dy, nohm_dy = main_dy + kept, nob_dy + kept, nohm_dy + kept
     scope_sql = "c.ctxid = ANY(:ctxs)" + (" OR c.ctxid IS NULL" if include_null else "")
     n = lambda cond: f"count(*) FILTER (WHERE {cond})"   # noqa: E731
     v = lambda cond: f"coalesce(sum(v) FILTER (WHERE {cond}), 0)"  # noqa: E731
     sql = f"""
 WITH base AS MATERIALIZED (
   SELECT c.ctxid, c.customerid, c.segment, c.expiry_bucket AS bucket, c.risk_score, c.annual_contract_value AS v,
-         {RB} AS rb, {VB} AS vb, r.retention_action_name AS rec, r.action_status AS astatus, r.outcome
+         {RB} AS rb, {VB} AS vb, r.retention_action_name AS rec, r.action_status AS astatus, r.outcome, ({hide}) AS hide
   FROM "{D}".contract c {REC_JOIN.format(c="c")}
   WHERE c.in_scope AND ({scope_sql}){st}
 )
@@ -328,14 +352,19 @@ SELECT 'camp', jsonb_build_object('name', rec, 'assigned', count(*), 'engaged', 
 UNION ALL
 SELECT 'risk', jsonb_build_object('band', LEAST(risk_score / 20, 4), 'engaged', {n("outcome = 'Engaged'")},
     'notEngaged', {n("outcome <> 'Engaged'")}, 'lost', {v("outcome = 'Declined'")}, 'converted', {v("outcome = 'Engaged'")})
-  FROM base WHERE outcome IS NOT NULL AND risk_score IS NOT NULL{main_dy} GROUP BY LEAST(risk_score / 20, 4)"""
-    rows = _run(session, sql, {**sp, **mp, "ctxs": ctxs}).all()
+  FROM base WHERE outcome IS NOT NULL AND risk_score IS NOT NULL{main_dy} GROUP BY LEAST(risk_score / 20, 4)
+UNION ALL
+SELECT 'excl', jsonb_build_object('n', count(*)) FROM base WHERE hide{main_all}"""
+    rows = _run(session, sql, {**sp, **mp, **hp, "ctxs": ctxs}).all()
     names = {c: nm for c, nm in _run(session, f'SELECT code, name FROM "{S}".ctx').all()}
 
     by_ctx, buckets, heat, camps = [], {b: 0 for b in BUCKETS}, [], []
     risk = empty["outcomeByRisk"]
+    excluded = 0
     for k, d in rows:
-        if k == "ctx":
+        if k == "excl":
+            excluded = d["n"]
+        elif k == "ctx":
             by_ctx.append({"ctx": d["ctx"], "name": names.get(d["ctx"]) or d["ctx"], "customers": d["customers"], "contracts": d["contracts"],
                            "value": d["value"], "segments": {"High Risk": d["hr"], "At Risk": d["ar"], "Healthy": d["hl"], "Standard": d["st"]},
                            "lostCount": d["lostN"], "lostValue": d["lostV"], "atRiskValue": d["riskV"], "convertedValue": d["convV"],
@@ -360,7 +389,7 @@ SELECT 'risk', jsonb_build_object('band', LEAST(risk_score / 20, 4), 'engaged', 
             "convertedValue": tot("convertedValue"), "actionsNeeded": tot("actionsNeeded"),
             "responseRate": round(tot("engaged") / logged * 100) if logged else None}
     camps.sort(key=lambda c: -c["assigned"])
-    return {"kpis": kpis, "buckets": buckets, "heat": heat, "byCtx": by_ctx, "campaigns": camps, "outcomeByRisk": risk,
+    return {"excluded": excluded, "kpis": kpis, "buckets": buckets, "heat": heat, "byCtx": by_ctx, "campaigns": camps, "outcomeByRisk": risk,
             "dataVersion": _data_version(session)}
 
 

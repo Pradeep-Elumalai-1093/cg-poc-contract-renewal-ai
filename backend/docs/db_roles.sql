@@ -18,8 +18,10 @@ GRANT SELECT, INSERT ON
     ai_recommendations.web_claims_summary,
     ai_recommendations.contract_recommendation
 TO ai_writer;
--- Once ingestion exists, also: GRANT USAGE ON SCHEMA app_data TO ai_writer;
---                              GRANT SELECT ON app_data.v_ai_work TO ai_writer;
+-- What the job reads to decide what to process (views run with their owner's rights, so no access to app_data is needed):
+GRANT SELECT ON ai_recommendations.v_excluded_contracts TO ai_writer;
+-- v_retention_options joins the contract table, so it exists only after the FIRST `python -m ingest`. Then run:
+--   GRANT SELECT ON ai_recommendations.v_retention_options TO ai_writer;
 
 -- ---------------------------------------------------------------------------
 -- app_api: the FastAPI service.
@@ -29,6 +31,9 @@ GRANT USAGE ON SCHEMA ai_recommendations, app_data TO app_api;
 GRANT SELECT, INSERT, UPDATE ON ai_recommendations.users, ai_recommendations.ctx TO app_api;
 GRANT SELECT, INSERT, DELETE ON ai_recommendations.user_ctx TO app_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.worklist_view TO app_api;   -- one saved view per user
+GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.user_exclusion_pref TO app_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.exclusion_set, ai_recommendations.exclusion_hit,
+    ai_recommendations.retention_action, ai_recommendations.retention_action_match TO app_api;   -- users configure these; the matches are rebuilt by the app and the load
 GRANT SELECT, INSERT ON ai_recommendations.audit_log TO app_api;            -- append-only
 GRANT SELECT, INSERT, UPDATE ON
     ai_recommendations.contract_summary,

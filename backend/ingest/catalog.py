@@ -30,6 +30,13 @@ def data_schema() -> str:
     return name
 
 
+def app_schema() -> str:
+    name = os.environ.get("DB_SCHEMA", "ai_recommendations")
+    if not _IDENT.match(name):
+        raise RuntimeError(f"DB_SCHEMA={name!r} is not a plain lower-case identifier")
+    return name
+
+
 # Catalog "Type" -> PostgreSQL type. The catalog doesn't distinguish whole numbers
 # from decimals, so counts and scores are listed here.
 SQL_TYPE = {"ID": "text", "Text": "text", "Yes/No": "boolean", "Date": "date",

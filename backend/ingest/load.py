@@ -23,7 +23,7 @@ from psycopg import sql
 from sqlalchemy.engine import make_url
 
 from . import IngestError
-from .catalog import CLAIM_COLUMNS, data_schema, index_definitions, load_catalog, table_columns
+from .catalog import CLAIM_COLUMNS, app_schema, data_schema, index_definitions, load_catalog, table_columns
 from .transform import for_copy
 
 ADVISORY_LOCK_KEY = 7351001           # one ingest at a time, whoever starts it
@@ -84,6 +84,24 @@ def ensure_parent(cur, D: str, table: str, columns: list[tuple[str, str]], rebui
     return notes
 
 
+def ensure_views(cur, D: str, S: str) -> None:
+    """What the AI pipeline reads: for every live contract, the retention actions it may be given.
+    A global action applies everywhere unless the contract's area has a local action with the same
+    category, sub-category and name; an action with criteria applies only to the contracts it matched.
+    It joins the contract table, so it lives here (created after the table exists, kept by every load)."""
+    cur.execute(f"""
+CREATE OR REPLACE VIEW "{S}".v_retention_options AS
+SELECT c.contractid, c.ctxid AS ctx, a.id AS action_id, a.scope, a.category, a.sub_category, a.name, a.description
+FROM "{D}".contract c
+JOIN "{S}".retention_action a ON a.deleted_at IS NULL AND (a.scope = 'global' OR a.ctx = c.ctxid)
+WHERE c.in_scope AND c.ctxid IS NOT NULL
+  AND (a.criteria = '{{}}'::jsonb OR EXISTS (SELECT 1 FROM "{S}".retention_action_match m WHERE m.action_id = a.id AND m.contractid = c.contractid))
+  AND NOT (a.scope = 'global' AND EXISTS (
+        SELECT 1 FROM "{S}".retention_action l WHERE l.scope = 'local' AND l.ctx = c.ctxid AND l.deleted_at IS NULL
+          AND lower(btrim(l.category)) = lower(btrim(a.category)) AND lower(btrim(l.sub_category)) = lower(btrim(a.sub_category))
+          AND lower(btrim(l.name)) = lower(btrim(a.name))))""")
+
+
 def _copy(cur, D: str, table: str, df, columns: list[str]) -> None:
     stmt = sql.SQL("COPY {} ({}) FROM STDIN WITH (FORMAT csv, NULL '')").format(
         sql.Identifier(D, table), sql.SQL(", ").join(sql.Identifier(c) for c in columns))
@@ -135,6 +153,7 @@ def run(contracts, contracts_report: dict, claims, claims_report: dict | None, *
         if cur.fetchone()[0] is None:
             raise IngestError("The database has not been migrated. Run `alembic upgrade head` from the backend folder, then try again.")
         notes = ensure_parent(cur, D, "contract", contract_cols, rebuild) + ensure_parent(cur, D, "claim", claim_cols, rebuild)
+        ensure_views(cur, D, app_schema())
         cur.execute(sql.SQL("INSERT INTO {} (status, source) VALUES ('running', %s) RETURNING data_version").format(
             sql.Identifier(D, "ingest_run")), (source,))
         v = cur.fetchone()[0]

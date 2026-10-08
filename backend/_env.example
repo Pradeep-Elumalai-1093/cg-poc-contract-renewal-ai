@@ -93,3 +93,6 @@ INGEST_LIVE_STATUS=live          # CONTRACT_STATUS value that means a live contr
 INGEST_LOST_WINDOW_DAYS=90       # a latest-version contract expired within this many days still shows as Lost
 INGEST_MIN_CTX_SAMPLE=30         # fewer valued contracts than this: the CTX uses the all-CTX median
 INGEST_MAX_DROP_PERCENT=50       # refuse an extract with this much fewer live contracts than the current data
+
+# A new exclusion set that would exclude more than this share of an area asks for confirmation.
+EXCLUSION_CONFIRM_SHARE=0.3

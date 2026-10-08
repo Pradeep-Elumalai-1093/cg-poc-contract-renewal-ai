@@ -4,7 +4,7 @@ python -m ingest --source snowflake
 python -m ingest --source local --contracts data/contract.csv --skip-claims --dry-run
 
 Reads the contract data product (and claims), applies the load rules, and replaces the live
-data in PostgreSQL atomically. Exit code: 0 ok, 1 failed, 2 refused (extract looks wrong).
+data in PostgreSQL atomically. Exit code: 0 ok, 1 failed, 2 refused (extract looks wrong), 3 loaded but rule matches not recomputed.
 """
 import argparse
 import os
@@ -100,6 +100,19 @@ def main(argv=None) -> int:
         print(f"\nDone. Data version {result['data_version']} is live: {result['contracts']:,} contracts "
               f"({result['in_scope']:,} live)" + (f", {result['claims']:,} claims" if result["claims"] is not None else ", claims unchanged") +
               f". Timings: {result['timings']}")
+        # The contracts were just replaced, so what each exclusion set and retention action matches is stale.
+        # The data is already live; if this step fails the pipeline must not trust the old matches, so say so loudly.
+        try:
+            import db
+            import matching
+            with db.SessionLocal() as session:
+                done = matching.recompute_all(session)
+                session.commit()
+            print(f"Recomputed the matches of {done['exclusion_sets']} exclusion set(s) and {done['actions']} retention action(s).")
+        except Exception as e:  # noqa: BLE001
+            print(f"\nWARNING: the data is live, but exclusion and retention-action matches could NOT be recomputed: {e}\n"
+                  "Re-run the load, or fix the rule that fails, before the AI pipeline runs.", file=sys.stderr)
+            return 3
         return 0
     except IngestAborted as e:
         print(f"\nREFUSED: {e}", file=sys.stderr)

@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -14,6 +15,9 @@ from starlette.middleware.sessions import SessionMiddleware
 import admin
 import auth
 import db
+import actions
+import exclusions
+import matching
 import worklist
 from auth import active_user
 from rules import MODEL_INFO
@@ -61,6 +65,24 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(worklist.router)
+app.include_router(exclusions.router)
+app.include_router(actions.router)
+
+
+# Failures the rule screens expect, answered the same way wherever they arise.
+@app.exception_handler(matching.CriteriaError)
+async def _criteria_error(_: Request, e: matching.CriteriaError):
+    return JSONResponse(status_code=422, content={"detail": str(e)})
+
+
+@app.exception_handler(matching.NoData)
+async def _no_data(_: Request, e: matching.NoData):
+    return JSONResponse(status_code=503, content={"detail": str(e)})
+
+
+@app.exception_handler(matching.VersionConflict)
+async def _version_conflict(_: Request, e: matching.VersionConflict):
+    return JSONResponse(status_code=409, content={"detail": "version_conflict"})
 
 
 @app.get("/api/model-info")

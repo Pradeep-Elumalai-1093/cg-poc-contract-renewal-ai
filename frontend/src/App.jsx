@@ -850,7 +850,7 @@ function BucketCards({ counts, value, onPick }) {
 
 // One filter state for the whole page: it narrows the worklist, the KPIs, the charts and the
 // bucket cards on both tabs at once.
-function FilterBar({ filters, onChange, areaOptions }) {
+function FilterBar({ filters, onChange, areaOptions, extra }) {
   const set = (k) => (v) => onChange((f) => ({ ...f, [k]: v }));
   const cell = filters.rb !== null && filters.vb !== null;
   const active = filters.area.length || filters.channel.length || filters.segment.length || filters.bucket || filters.rb !== null || filters.vb !== null;
@@ -861,6 +861,7 @@ function FilterBar({ filters, onChange, areaOptions }) {
       {areaOptions.length > 1 && <MultiSelect label="areas" options={areaOptions} selected={filters.area} onChange={set("area")} />}
       <MultiSelect label="channels" options={[{ value: "Dealer", label: "Dealer" }, { value: "Direct", label: "Direct" }]} selected={filters.channel} onChange={set("channel")} />
       <MultiSelect label="segments" options={SEGMENTS.map((s) => ({ value: s, label: s }))} selected={filters.segment} onChange={set("segment")} />
+      {extra}
       {(cell || filters.rb !== null) && (
         <span style={chip}>
           Risk {filters.rb * 10}–{filters.rb * 10 + 9}{filters.vb !== null && ` · ${VALUE_LABEL[filters.vb]}`}
@@ -955,7 +956,14 @@ function Worklist({ params, view, extraKey, total, search, onSearch, onSort, onC
     if (c === "contractid") return <span style={{ color: T.inkMuted, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{r.contractid}</span>;
     if (c === "risk_score") return r.segment ? <Badge text={`${r.segment} · ${r.risk_score ?? "—"}`} color={SEGMENT_COLOR[r.segment]} bg={SEGMENT_BG[r.segment]} /> : "—";
     if (c === "ctxid") return <span title={areaLabel(r.ctxid)}>{r.ctxid ?? "—"}</span>;
-    if (c === "recommended_action") return <Badge text={rec?.name || "-"} bg={T.purpleBg} />;
+    if (c === "recommended_action") {
+      return (
+        <span style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
+          {r.excl?.length > 0 && <span title={`Excluded by: ${r.excl.join(", ")}`}><Badge text="Excluded" color={T.risk} bg={T.riskBg} /></span>}
+          {(rec?.name || !r.excl?.length) && <Badge text={rec?.name || "-"} bg={T.purpleBg} />}
+        </span>
+      );
+    }
     if (c === "action_status") return <StatusCell rec={rec} />;
     return fmtCell(c, info[c]?.kind, r[c]);
   };
@@ -1038,6 +1046,461 @@ function Worklist({ params, view, extraKey, total, search, onSearch, onSort, onC
 }
 
 /* ---------------------------------------------------------------
+   RULES: EXCLUSION SETS AND RETENTION ACTIONS
+   Both are defined by the same kind of criteria - conditions on any contract column, stacked like
+   Excel filters (different columns are AND-ed, several values of one column are OR-ed) - so they
+   share one builder. The server validates everything; what is offered here (columns, operators,
+   value lists) comes from the server too.
+----------------------------------------------------------------*/
+const OP_ORDER = ["in", "eq", "ne", "gt", "gte", "lt", "lte", "between", "contains", "starts_with", "is_null"];
+const OP_LABEL = { in: "is one of", eq: "equals", ne: "does not equal", gt: ">", gte: "≥", lt: "<", lte: "≤", between: "between", contains: "contains", starts_with: "starts with", is_null: "is empty / not empty" };
+const field = { border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 8px", fontSize: 12.5, fontFamily: "inherit", color: T.ink, background: "#fff" };
+const defaultOp = (kind) => (kind === "bool" ? "eq" : kind === "text" || kind === "id" ? "in" : "gte");
+const inputType = (kind) => (kind === "date" ? "date" : kind === "number" || kind === "int" ? "number" : "text");
+const toRows = (criteria) => Object.entries(criteria || {}).map(([col, cond]) => (Array.isArray(cond)
+  ? { col, op: "in", v: cond.map(String) } : { col, op: Object.keys(cond)[0], v: Object.values(cond)[0] }));
+const fromRows = (rows) => Object.fromEntries(rows.filter((r) => r.col).map((r) => [r.col,
+  r.op === "in" ? (Array.isArray(r.v) ? r.v : String(r.v ?? "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean)) : { [r.op]: r.v ?? "" }]));
+
+function describeCriteria(criteria, columns) {
+  const label = Object.fromEntries(columns.map((c) => [c.key, c.label]));
+  const parts = Object.entries(criteria || {}).map(([k, c]) => {
+    if (Array.isArray(c)) return `${label[k] || k} is ${c.slice(0, 3).join(" / ")}${c.length > 3 ? ` (+${c.length - 3} more)` : ""}`;
+    const [op, v] = Object.entries(c)[0];
+    return `${label[k] || k} ${op === "is_null" ? (v ? "is empty" : "is not empty") : `${OP_LABEL[op]} ${[].concat(v).join(" and ")}`}`;
+  });
+  return parts.length ? parts.join(" · ") : "All contracts";
+}
+
+function ValueInput({ col, op, v, options, onChange }) {
+  const t = inputType(col.kind);
+  if (op === "is_null") return <select value={String(v)} onChange={(e) => onChange(e.target.value === "true")} style={field}><option value="true">is empty</option><option value="false">is not empty</option></select>;
+  if (op === "between") {
+    const [a, b] = Array.isArray(v) ? v : ["", ""];
+    return <><input type={t} value={a} onChange={(e) => onChange([e.target.value, b])} style={field} /> and <input type={t} value={b} onChange={(e) => onChange([a, e.target.value])} style={field} /></>;
+  }
+  if (col.kind === "bool") return <select value={String(v)} onChange={(e) => onChange(e.target.value)} style={field}><option value="">choose…</option><option value="true">Yes</option><option value="false">No</option></select>;
+  if (op === "in" && col.picker) {
+    return <MultiSelect label="values" options={(options || []).map((o) => ({ value: o.value, label: `${o.value} (${o.count.toLocaleString()})` }))} selected={Array.isArray(v) ? v : []} onChange={onChange} />;
+  }
+  if (op === "in") return <input type="text" placeholder="comma-separated" value={Array.isArray(v) ? v.join(", ") : v ?? ""} onChange={(e) => onChange(e.target.value)} style={{ ...field, minWidth: 240 }} />;
+  return <input type={t} value={v ?? ""} onChange={(e) => onChange(e.target.value)} style={{ ...field, minWidth: 160 }} />;
+}
+
+function CriteriaEditor({ columns, criteria, onChange }) {
+  const [rows, setRows] = useState(() => toRows(criteria));
+  const [values, setValues] = useState({});
+  const byKey = Object.fromEntries(columns.map((c) => [c.key, c]));
+  const loadValues = (key) => {
+    if (byKey[key]?.picker && !values[key]) api.getColumnValues(key).then((list) => setValues((s) => ({ ...s, [key]: list }))).catch(() => {});
+  };
+  useEffect(() => { rows.forEach((r) => loadValues(r.col)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const update = (next) => { setRows(next); onChange(fromRows(next)); };
+  const set = (i, patch) => update(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const used = new Set(rows.map((r) => r.col));
+  return (
+    <div>
+      {rows.map((r, i) => {
+        const c = byKey[r.col];
+        return (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+            <select value={r.col} style={field} onChange={(e) => { const k = e.target.value; loadValues(k); set(i, { col: k, op: defaultOp(byKey[k].kind), v: "" }); }}>
+              {!r.col && <option value="">Choose a column…</option>}
+              {columns.filter((x) => x.key === r.col || !used.has(x.key)).map((x) => <option key={x.key} value={x.key}>{x.label}{x.personal ? " (personal data)" : ""}</option>)}
+            </select>
+            {c && (
+              <select value={r.op} style={field} onChange={(e) => set(i, { op: e.target.value, v: e.target.value === "is_null" ? true : e.target.value === "between" ? ["", ""] : "" })}>
+                {OP_ORDER.filter((o) => c.ops.includes(o)).map((o) => <option key={o} value={o}>{OP_LABEL[o]}</option>)}
+              </select>
+            )}
+            {c && <ValueInput col={c} op={r.op} v={r.v} options={values[r.col]} onChange={(v) => set(i, { v })} />}
+            <button title="Remove" onClick={() => update(rows.filter((_, j) => j !== i))} style={{ border: "none", background: "none", cursor: "pointer", display: "flex" }}><X size={14} color={T.inkFaint} /></button>
+          </div>
+        );
+      })}
+      <button onClick={() => update([...rows, { col: "", op: "in", v: "" }])} style={smallBtn}>+ Add a condition</button>
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(22,27,34,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 24 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: 12, padding: 22, width: "min(820px, 100%)", maxHeight: "90vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
+          <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer" }}><X size={18} color={T.inkFaint} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const Labelled = ({ label, children, hint }) => (
+  <div style={{ marginBottom: 14 }}>
+    <div style={{ ...sectionLabel, marginBottom: 4 }}>{label}</div>
+    {children}
+    {hint && <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 4 }}>{hint}</div>}
+  </div>
+);
+
+// Turns the server's refusals into something a person can act on.
+function explain(e, setError, setConfirm) {
+  const d = e.detail;
+  if (d && d.code === "confirm_required") { setConfirm(d); setError(null); }
+  else if (d === "version_conflict") setError("Someone else changed this while you were editing. Close this window and open it again to see their version.");
+  else if (d === "name_taken") setError("A set with this name already exists in this area.");
+  else if (d === "already_exists") setError("An action with this category, sub-category and name already exists here.");
+  else setError(String(e.message || e));
+}
+
+// How many contracts the conditions match right now - shown while you edit, before anything is saved.
+function usePreview(fetcher, criteria, allowEmpty) {
+  const [p, setP] = useState(null);
+  const [err, setErr] = useState(null);
+  const key = JSON.stringify(criteria);
+  useEffect(() => {
+    if (!allowEmpty && Object.keys(criteria).length === 0) { setP(null); setErr(null); return undefined; }
+    const t = setTimeout(() => fetcher(criteria).then((r) => { setP(r); setErr(null); }).catch((e) => { setP(null); setErr(String(e.message || e)); }), 400);
+    return () => clearTimeout(t);
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return [p, err];
+}
+
+function PreviewLine({ p, err, empty }) {
+  if (err) return <div style={{ fontSize: 12.5, color: T.risk }}>{err}</div>;
+  if (!p) return <div style={{ fontSize: 12.5, color: T.inkFaint }}>{empty}</div>;
+  return (
+    <div style={{ fontSize: 12.5, color: T.ink }}>
+      Matches <b>{p.matches.toLocaleString()}</b> of {p.live.toLocaleString()} live contracts ({Math.round(p.share * 100)}%)
+      {p.newlyExcluded !== undefined && <> · <b>{p.newlyExcluded.toLocaleString()}</b> not already excluded by another set</>}
+    </div>
+  );
+}
+
+function ExclusionEditor({ existing, columns, areaOptions, onClose, onSaved }) {
+  const [name, setName] = useState(existing?.name ?? "");
+  const [ctx, setCtx] = useState(existing?.ctx ?? areaOptions[0]?.value ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [criteria, setCriteria] = useState(existing?.criteria ?? {});
+  const [error, setError] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [p, perr] = usePreview((c) => api.previewExclusion({ ctx, criteria: c, setId: existing?.id }), criteria, false);
+
+  const save = async (activate) => {
+    setBusy(true); setError(null);
+    try {
+      if (existing) {
+        let row = await api.updateExclusion(existing.id, { version: existing.version, name, description, criteria, confirm: confirmed });
+        if (activate && row.status !== "active") row = await api.exclusionAction(existing.id, "activate", { version: row.version, confirm: confirmed });
+      } else {
+        await api.createExclusion({ ctx, name, description, criteria, activate, confirm: confirmed });
+      }
+      onSaved();
+    } catch (e) { explain(e, setError, setConfirm); }
+    setBusy(false);
+  };
+  const ready = name.trim() && ctx && Object.keys(criteria).length > 0;
+  return (
+    <Modal title={existing ? `Edit exclusion set · ${existing.name}` : "New exclusion set"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 14 }}>
+        <Labelled label="Name"><input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} style={{ ...field, width: "100%" }} /></Labelled>
+        <Labelled label="Area"><select value={ctx} disabled={!!existing} onChange={(e) => setCtx(e.target.value)} style={{ ...field, width: "100%" }}>{areaOptions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}</select></Labelled>
+      </div>
+      <Labelled label="Description (optional)"><input value={description} onChange={(e) => setDescription(e.target.value)} style={{ ...field, width: "100%" }} /></Labelled>
+      <Labelled label="Exclude contracts where…" hint="Contracts matching ALL of these conditions are excluded. These contracts still get their summaries, but no recommended action.">
+        <CriteriaEditor columns={columns} criteria={criteria} onChange={setCriteria} />
+      </Labelled>
+      <Card style={{ padding: 12, marginBottom: 14, background: T.surfaceSunken }}><PreviewLine p={p} err={perr} empty="Add a condition to see how many contracts it would exclude." /></Card>
+      {confirm && (
+        <Card style={{ padding: 12, marginBottom: 14, background: T.amberBg, borderColor: T.amber }}>
+          <label style={{ fontSize: 12.5, display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+            This excludes {confirm.matches.toLocaleString()} of {confirm.live.toLocaleString()} contracts ({Math.round(confirm.share * 100)}% of the area). I want to do this.
+          </label>
+        </Card>
+      )}
+      {error && <div style={{ fontSize: 12.5, color: T.risk, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={smallBtn}>Cancel</button>
+        <button disabled={!ready || busy} onClick={() => save(false)} style={{ ...smallBtn, opacity: ready && !busy ? 1 : 0.5 }}>{existing ? "Save changes" : "Save as draft"}</button>
+        {(!existing || existing.status !== "active") && <button disabled={!ready || busy} onClick={() => save(true)} style={{ ...smallBtn, background: T.ink, color: "#fff", opacity: ready && !busy ? 1 : 0.5 }}>Save and activate</button>}
+      </div>
+    </Modal>
+  );
+}
+
+const th = { textAlign: "left" };
+function ExclusionsPage({ areaOptions, areaLabel, onChanged }) {
+  const [data, setData] = useState({ sets: [], combined: {} });
+  const [columns, setColumns] = useState([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [editing, setEditing] = useState(undefined);   // undefined: closed, null: new, object: editing that set
+  const [error, setError] = useState(null);
+  const load = useCallback(async () => {
+    try {
+      const [d, c] = await Promise.all([api.getExclusions(showDeleted), api.getRuleColumns()]);
+      setData(d); setColumns(c);
+    } catch (e) { setError(String(e.message || e)); }
+  }, [showDeleted]);
+  useEffect(() => { load(); }, [load]);
+  const changed = async () => { setEditing(undefined); await load(); onChanged(); };
+  const run = async (fn, ask) => {
+    if (ask && !window.confirm(ask)) return;
+    setError(null);
+    try { await fn(); await changed(); } catch (e) { explain(e, setError, () => {}); }
+  };
+  const activate = (s) => run(async () => {
+    try { await api.exclusionAction(s.id, "activate", { version: s.version }); } catch (e) {
+      const d = e.detail;
+      if (d && d.code === "confirm_required" && window.confirm(`This will exclude ${d.matches.toLocaleString()} of ${d.live.toLocaleString()} contracts (${Math.round(d.share * 100)}% of the area). Continue?`)) {
+        await api.exclusionAction(s.id, "activate", { version: s.version, confirm: true });
+      } else if (!(d && d.code === "confirm_required")) throw e;
+    }
+  });
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ maxWidth: 760 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Exclusion sets</h2>
+          <div style={{ fontSize: 12.5, color: T.inkMuted, lineHeight: 1.5 }}>
+            Contracts matching an <b>active</b> set get their summaries but no recommended action. Everyone with the area sees its sets.
+            A contract matching several sets is counted once. What <i>you</i> hide from your own screens is chosen separately, in the filter bar.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ fontSize: 12, color: T.inkMuted, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />Show deleted</label>
+          <button onClick={() => setEditing(null)} style={{ ...smallBtn, background: T.ink, color: "#fff" }}>New exclusion set</button>
+        </div>
+      </div>
+      {error && <div style={{ fontSize: 12.5, color: T.risk, marginBottom: 10 }}>{error}</div>}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <table>
+          <thead><tr><th style={th}>Name</th><th style={th}>Area</th><th style={th}>Status</th><th style={th}>Conditions</th><th style={th}>Excludes</th><th style={th}>Only this set</th><th style={th}>Last change</th><th></th></tr></thead>
+          <tbody>
+            {data.sets.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.inkFaint }}>{showDeleted ? "No deleted sets." : "No exclusion sets yet."}</td></tr>}
+            {data.sets.map((s) => (
+              <tr key={s.id}>
+                <td style={{ fontWeight: 600 }}>{s.name}{s.description && <div style={{ fontWeight: 400, fontSize: 11.5, color: T.inkFaint }}>{s.description}</div>}</td>
+                <td>{areaLabel(s.ctx)}</td>
+                <td>{s.deleted ? <Badge text="Deleted" color={T.inkFaint} bg={T.surfaceSunken} /> : s.status === "active" ? <Badge text="Active" color={T.safe} bg={T.safeBg} /> : <Badge text="Draft" color={T.amber} bg={T.amberBg} />}</td>
+                <td style={{ maxWidth: 320, fontSize: 12, color: T.inkMuted }}>{describeCriteria(s.criteria, columns)}</td>
+                <td>{s.status === "active" ? (s.matchCount ?? 0).toLocaleString() : "—"}</td>
+                <td>{s.status === "active" ? (s.onlyThisSet ?? 0).toLocaleString() : "—"}</td>
+                <td style={{ fontSize: 11.5, color: T.inkFaint }}>{s.updatedBy || "—"}<br />{s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : ""}</td>
+                <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                  {s.deleted ? <button style={smallBtn} onClick={() => run(() => api.exclusionAction(s.id, "restore"))}>Restore</button> : (
+                    <>
+                      <button style={smallBtn} onClick={() => setEditing(s)}>Edit</button>{" "}
+                      {s.status === "active"
+                        ? <button style={smallBtn} onClick={() => run(() => api.exclusionAction(s.id, "deactivate", { version: s.version }))}>Deactivate</button>
+                        : <button style={smallBtn} onClick={() => activate(s)}>Activate</button>}{" "}
+                      <button style={smallBtn} onClick={() => run(() => api.deleteExclusion(s.id, s.version), `Delete "${s.name}"? It can be restored later.`)}>Delete</button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+      {Object.keys(data.combined).length > 0 && (
+        <div style={{ fontSize: 12.5, color: T.inkMuted, marginTop: 10 }}>
+          Together, the active sets exclude: {Object.entries(data.combined).map(([c, n]) => `${areaLabel(c)} - ${n.toLocaleString()} contracts`).join(" · ")}
+        </div>
+      )}
+      {editing !== undefined && <ExclusionEditor existing={editing} columns={columns} areaOptions={areaOptions} onClose={() => setEditing(undefined)} onSaved={changed} />}
+    </div>
+  );
+}
+
+function ActionEditor({ existing, columns, areaOptions, isAdmin, onClose, onSaved }) {
+  const [scope, setScope] = useState(existing?.scope ?? (isAdmin && areaOptions.length === 0 ? "global" : "local"));
+  const [ctx, setCtx] = useState(existing?.ctx ?? areaOptions[0]?.value ?? "");
+  const [category, setCategory] = useState(existing?.category ?? "");
+  const [subCategory, setSub] = useState(existing?.subCategory ?? "");
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [criteria, setCriteria] = useState(existing?.criteria ?? {});
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [p, perr] = usePreview((c) => api.previewAction({ ctx: scope === "global" ? null : ctx, criteria: c }), criteria, true);
+  const save = async () => {
+    setBusy(true); setError(null);
+    try {
+      if (existing) await api.updateAction(existing.id, { version: existing.version, category, subCategory, name, description, criteria });
+      else await api.createAction({ scope, ctx: scope === "global" ? null : ctx, category, subCategory, name, description, criteria });
+      onSaved();
+    } catch (e) { explain(e, setError, () => {}); }
+    setBusy(false);
+  };
+  const ready = category.trim() && name.trim() && (scope === "global" || ctx);
+  return (
+    <Modal title={existing ? `Edit retention action · ${existing.name}` : "New retention action"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 220px", gap: 14 }}>
+        <Labelled label="Category"><input value={category} onChange={(e) => setCategory(e.target.value)} maxLength={100} style={{ ...field, width: "100%" }} /></Labelled>
+        <Labelled label="Sub-category (optional)"><input value={subCategory} onChange={(e) => setSub(e.target.value)} maxLength={100} style={{ ...field, width: "100%" }} /></Labelled>
+        <Labelled label="Applies to">
+          <select value={scope === "global" ? "global" : ctx} disabled={!!existing} onChange={(e) => { if (e.target.value === "global") setScope("global"); else { setScope("local"); setCtx(e.target.value); } }} style={{ ...field, width: "100%" }}>
+            {isAdmin && <option value="global">Every area (global)</option>}
+            {areaOptions.map((a) => <option key={a.value} value={a.value}>{a.label} only</option>)}
+          </select>
+        </Labelled>
+      </div>
+      <Labelled label="Name" hint="A local action replaces a global one only when category, sub-category and name are all the same.">
+        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} style={{ ...field, width: "100%" }} />
+      </Labelled>
+      <Labelled label="Description" hint="Shown to the model when it chooses, so say what the action is and when it fits.">
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} style={{ ...field, width: "100%", minHeight: 70, resize: "vertical" }} />
+      </Labelled>
+      <Labelled label="Applies to contracts where… (optional)" hint="Leave empty and the action is available for every contract.">
+        <CriteriaEditor columns={columns} criteria={criteria} onChange={setCriteria} />
+      </Labelled>
+      <Card style={{ padding: 12, marginBottom: 14, background: T.surfaceSunken }}><PreviewLine p={p} err={perr} empty="Applies to every contract." /></Card>
+      {error && <div style={{ fontSize: 12.5, color: T.risk, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={smallBtn}>Cancel</button>
+        <button disabled={!ready || busy} onClick={save} style={{ ...smallBtn, background: T.ink, color: "#fff", opacity: ready && !busy ? 1 : 0.5 }}>{existing ? "Save changes" : "Create action"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ActionsPage({ user, areaOptions, areaLabel, onChanged }) {
+  const [list, setList] = useState([]);
+  const [columns, setColumns] = useState([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [editing, setEditing] = useState(undefined);
+  const [cloning, setCloning] = useState(null);
+  const [error, setError] = useState(null);
+  const isAdmin = user.role === "admin";
+  const load = useCallback(async () => {
+    try {
+      const [a, c] = await Promise.all([api.getActions(showDeleted), api.getRuleColumns()]);
+      setList(a); setColumns(c);
+    } catch (e) { setError(String(e.message || e)); }
+  }, [showDeleted]);
+  useEffect(() => { load(); }, [load]);
+  const changed = async () => { setEditing(undefined); setCloning(null); await load(); onChanged(); };
+  const run = async (fn, ask) => {
+    if (ask && !window.confirm(ask)) return;
+    setError(null);
+    try { await fn(); await changed(); } catch (e) { explain(e, setError, () => {}); }
+  };
+  const canManage = (a) => (a.scope === "global" ? isAdmin : isAdmin || areaOptions.some((o) => o.value === a.ctx));
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ maxWidth: 760 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>Retention actions</h2>
+          <div style={{ fontSize: 12.5, color: T.inkMuted, lineHeight: 1.5 }}>
+            The menu the model recommends from. <b>Global</b> actions apply everywhere and are managed by admins; <b>area</b> actions belong to one area.
+            To customise a global action for your area, clone it and keep the name - your version then replaces it there.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ fontSize: 12, color: T.inkMuted, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />Show deleted</label>
+          <button onClick={() => setEditing(null)} style={{ ...smallBtn, background: T.ink, color: "#fff" }}>New retention action</button>
+        </div>
+      </div>
+      {error && <div style={{ fontSize: 12.5, color: T.risk, marginBottom: 10 }}>{error}</div>}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <table>
+          <thead><tr><th style={th}>Category</th><th style={th}>Action</th><th style={th}>Applies to</th><th style={th}>Conditions</th><th style={th}>Matches</th><th></th></tr></thead>
+          <tbody>
+            {list.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.inkFaint }}>{showDeleted ? "No deleted actions." : "No retention actions yet."}</td></tr>}
+            {list.map((a) => (
+              <tr key={a.id}>
+                <td>{a.category}{a.subCategory && <span style={{ color: T.inkFaint }}> › {a.subCategory}</span>}</td>
+                <td style={{ fontWeight: 600 }}>{a.name}{a.description && <div style={{ fontWeight: 400, fontSize: 11.5, color: T.inkFaint, maxWidth: 360 }}>{a.description}</div>}</td>
+                <td>
+                  {a.scope === "global" ? <Badge text="Every area" color={T.info} bg={T.infoBg} /> : <Badge text={areaLabel(a.ctx)} color={T.purple} bg={T.purpleBg} />}
+                  {a.overridesGlobal && <div style={{ fontSize: 11, color: T.amber }}>replaces the global action here</div>}
+                  {a.overriddenIn.length > 0 && <div style={{ fontSize: 11, color: T.amber }}>replaced in {a.overriddenIn.join(", ")}</div>}
+                </td>
+                <td style={{ maxWidth: 300, fontSize: 12, color: T.inkMuted }}>{describeCriteria(a.criteria, columns)}</td>
+                <td>{a.matchCount == null ? "all" : a.matchCount.toLocaleString()}</td>
+                <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                  {a.deleted ? (canManage(a) && <button style={smallBtn} onClick={() => run(() => api.restoreAction(a.id))}>Restore</button>) : (
+                    <>
+                      {canManage(a) && <><button style={smallBtn} onClick={() => setEditing(a)}>Edit</button>{" "}</>}
+                      {areaOptions.length > 0 && <><button style={smallBtn} onClick={() => setCloning(a)}>Clone</button>{" "}</>}
+                      {canManage(a) && <button style={smallBtn} onClick={() => run(() => api.deleteAction(a.id, a.version), `Delete "${a.name}"? It can be restored later.`)}>Delete</button>}
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+      {editing !== undefined && <ActionEditor existing={editing} columns={columns} areaOptions={areaOptions} isAdmin={isAdmin} onClose={() => setEditing(undefined)} onSaved={changed} />}
+      {cloning && (
+        <Modal title={`Clone · ${cloning.name}`} onClose={() => setCloning(null)}>
+          <CloneForm action={cloning} areaOptions={areaOptions} onClone={(body) => run(() => api.cloneAction(cloning.id, body))} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function CloneForm({ action, areaOptions, onClone }) {
+  const [ctx, setCtx] = useState(areaOptions[0]?.value ?? "");
+  const [name, setName] = useState(action.name);
+  return (
+    <>
+      <Labelled label="Copy into area"><select value={ctx} onChange={(e) => setCtx(e.target.value)} style={field}>{areaOptions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}</select></Labelled>
+      <Labelled label="Name" hint={name.trim().toLowerCase() === action.name.trim().toLowerCase() && action.scope === "global" ? "Same name: your copy will replace the global action in this area." : "A different name makes a separate action; the global one stays."}>
+        <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...field, width: "100%" }} />
+      </Labelled>
+      <div style={{ textAlign: "right" }}><button style={{ ...smallBtn, background: T.ink, color: "#fff" }} disabled={!ctx || !name.trim()} onClick={() => onClone({ ctx, name })}>Clone</button></div>
+    </>
+  );
+}
+
+// Which exclusion sets hide contracts from MY screens: all active sets (default), only the ones I pick, or none.
+function ExclusionControl({ sets, pref, onChange, hidden, areaLabel }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const out = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", out);
+    return () => document.removeEventListener("mousedown", out);
+  }, []);
+  if (!sets.length) return null;
+  const label = pref.mode === "none" ? "Exclusions: show everything" : pref.mode === "custom" ? `Exclusions: ${pref.setIds.length} of ${sets.length} sets` : `Exclusions: all ${sets.length} active sets`;
+  const radio = (mode, text) => (
+    <label style={{ display: "flex", gap: 8, padding: "6px 8px", fontSize: 12.5, cursor: "pointer" }}>
+      <input type="radio" checked={pref.mode === mode} onChange={() => onChange({ mode, setIds: mode === "custom" ? pref.setIds : [] })} />{text}
+    </label>
+  );
+  return (
+    <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center", gap: 8 }}>
+      <button onClick={() => setOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, border: `1px solid ${pref.mode === "all" ? T.border : T.brand}`, background: pref.mode === "all" ? T.surface : T.brandBg, color: pref.mode === "all" ? T.inkMuted : T.brand, borderRadius: 7, padding: "7px 10px", cursor: "pointer" }}>
+        {label}<ChevronDown size={13} />
+      </button>
+      {hidden > 0 && <span style={{ fontSize: 11.5, color: T.inkFaint }}>{hidden.toLocaleString()} contracts hidden</span>}
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 6px 18px rgba(22,27,34,0.12)", padding: 6, zIndex: 30, minWidth: 300 }}>
+          {radio("all", "Hide contracts matched by any active set")}
+          {radio("custom", "Hide only the sets I pick")}
+          {radio("none", "Show everything")}
+          {pref.mode === "custom" && sets.map((s) => (
+            <label key={s.id} style={{ display: "flex", gap: 8, padding: "5px 8px 5px 28px", fontSize: 12.5, cursor: "pointer" }}>
+              <input type="checkbox" checked={pref.setIds.includes(s.id)} onChange={() => onChange({ mode: "custom", setIds: pref.setIds.includes(s.id) ? pref.setIds.filter((i) => i !== s.id) : [...pref.setIds, s.id] })} />
+              {s.name} <span style={{ color: T.inkFaint }}>· {areaLabel(s.ctx)}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    MAIN APP
    All data manipulation and AI orchestration now happens in FastAPI.
    This component only fetches, displays, and triggers actions.
@@ -1066,6 +1529,19 @@ function ContractRenewalPOC({ user, onLogout }) {
   const [apiError, setApiError] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const fail = (e) => { if (e?.name !== "AbortError") setApiError(String(e?.message || e)); };
+  // Exclusion sets: the active ones, and which of them this user has chosen to hide from their own screens.
+  const [exclSets, setExclSets] = useState([]);
+  const [pref, setPref] = useState({ mode: "all", setIds: [] });
+  const [prefTick, setPrefTick] = useState(0);              // bump when the sets or the choice change: list and figures re-query
+  const loadExclusions = useCallback(() => {
+    api.getExclusions().then((r) => setExclSets(r.sets.filter((x) => x.status === "active"))).catch(fail);
+    api.getExclusionPref().then(setPref).catch(fail);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadExclusions(); }, [loadExclusions]);
+  const savePref = async (next) => {
+    try { setPref(await api.saveExclusionPref(next)); setPrefTick((t) => t + 1); } catch (e) { fail(e); }
+  };
+  const onRulesChanged = () => { loadExclusions(); setPrefTick((t) => t + 1); };
 
   // Initial load: the saved view, the model description and the area names - small, and nothing about contracts.
   useEffect(() => {
@@ -1087,7 +1563,7 @@ function ContractRenewalPOC({ user, onLogout }) {
     const c = new AbortController();
     api.getSummary(filters, c.signal).then(setSummary).catch(fail);
     return () => c.abort();
-  }, [JSON.stringify(filters), refresh]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(filters), refresh, prefTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Opening a contract fetches everything about it; nothing but the list row is held beforehand.
   useEffect(() => {
@@ -1152,6 +1628,7 @@ function ContractRenewalPOC({ user, onLogout }) {
   };
 
   const k = summary?.kpis ?? ZERO_KPIS;
+  const exclusionUi = <ExclusionControl sets={exclSets} pref={pref} onChange={savePref} hidden={summary?.excluded ?? 0} areaLabel={areaLabel} />;
   // Same shape the Dashboard markup below has always read.
   const dashGlobalMetrics = {
     customerCount: k.customers, contractCount: k.contracts, segmentCounts: k.segments, totalValue: k.value, lostCount: k.lostCount,
@@ -1346,6 +1823,8 @@ function ContractRenewalPOC({ user, onLogout }) {
         <button className={`tabbtn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
         <button className={`tabbtn ${tab === "renewal-prioritization" ? "active" : ""}`} onClick={() => setTab("renewal-prioritization")}>Renewal Prioritization</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
+        <button className={`tabbtn ${tab === "exclusions" ? "active" : ""}`} onClick={() => setTab("exclusions")}>Exclusions</button>
+        <button className={`tabbtn ${tab === "actions" ? "active" : ""}`} onClick={() => setTab("actions")}>Retention Actions</button>
         <button className={`tabbtn ${tab === "technical-details" ? "active" : ""}`} onClick={() => setTab("technical-details")}>Technical Details</button>
         {user.role === "admin" && (
           <button className={`tabbtn ${tab === "access" ? "active" : ""}`} onClick={() => setTab("access")}>Access</button>
@@ -1460,7 +1939,7 @@ function ContractRenewalPOC({ user, onLogout }) {
 
       {tab === "renewal-prioritization" && (
         <>
-          <FilterBar filters={filters} onChange={setFilters} areaOptions={areaOptions} />
+          <FilterBar filters={filters} onChange={setFilters} areaOptions={areaOptions} extra={exclusionUi} />
 
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>Contract expiring in: </div>
           <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Click a milestone to filter the worklist, charts, and KPIs below by how soon each contract is due for renewal.</div>
@@ -1523,7 +2002,7 @@ function ContractRenewalPOC({ user, onLogout }) {
           <Worklist
             params={{ ...filters, q, sort: view.sort.key, dir: view.sort.dir }}
             view={view}
-            extraKey={view.columns.join(",")}
+            extraKey={`${view.columns.join(",")}|${prefTick}`}
             total={q ? null : k.contracts}
             search={search}
             onSearch={setSearch}
@@ -1557,7 +2036,7 @@ function ContractRenewalPOC({ user, onLogout }) {
 
       {tab === "dashboard" && (
         <>
-          <FilterBar filters={filters} onChange={setFilters} areaOptions={areaOptions} />
+          <FilterBar filters={filters} onChange={setFilters} areaOptions={areaOptions} extra={exclusionUi} />
 
           {/* Milestone drill-down - the same cards and the same filter as Renewal Prioritization */}
           <BucketCards counts={summary?.buckets} value={filters.bucket} onPick={(b) => setFilters((f) => ({ ...f, bucket: f.bucket === b ? null : b }))} />
@@ -1684,6 +2163,9 @@ function ContractRenewalPOC({ user, onLogout }) {
         </>
       )}
 
+
+      {tab === "exclusions" && <ExclusionsPage areaOptions={areaOptions} areaLabel={areaLabel} onChanged={onRulesChanged} />}
+      {tab === "actions" && <ActionsPage user={user} areaOptions={areaOptions} areaLabel={areaLabel} onChanged={onRulesChanged} />}
 
       {/* Chart maximize modal - the campaign bar chart.
           Click the backdrop or the minimize button to close; z-index sits
