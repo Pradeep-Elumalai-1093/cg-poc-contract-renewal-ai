@@ -30,7 +30,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL is not set. Point it at PostgreSQL, e.g. "
-        "postgresql+psycopg://app:change-me@localhost:5432/uda_1325 (see docker-compose.yml and .env.example)."
+        "postgresql+psycopg://app:change-me@localhost:5433/uda_1325 (see docker-compose.yml and .env.example)."
     )
 SCHEMA = os.environ.get("DB_SCHEMA", "ai_recommendations")
 DATA_SCHEMA = os.environ.get("DB_SCHEMA_DATA", "app_data")

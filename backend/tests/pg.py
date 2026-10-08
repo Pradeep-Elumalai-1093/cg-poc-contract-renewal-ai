@@ -16,7 +16,7 @@ from psycopg import sql
 from sqlalchemy.engine import make_url
 
 BACKEND = Path(__file__).resolve().parent.parent
-ADMIN_DSN = os.environ.get("TEST_PG_ADMIN_DSN", "postgresql://postgres:postgres@127.0.0.1:5432/postgres")
+ADMIN_DSN = os.environ.get("TEST_PG_ADMIN_DSN", "postgresql://postgres:postgres@127.0.0.1:5433/postgres")
 
 
 def _drop(name: str) -> None:
