@@ -10,7 +10,6 @@ import contextlib
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import threading
@@ -360,21 +359,5 @@ for k in range(5):
     assert row(f"N{k}", "segment") == compute_segment(55, 1000 + k, global_median)  # 5 valued contracts: the all-CTX median applies
 assert abs(row("M25", "value_vs_median") - 125 / 119.5) < 1e-6
 print("ok - per-CTX median (119.5 for 40 valued contracts), fallback to the all-CTX median for a CTX with 5, and the segments that follow")
-
-# ======================================================================== J. the app can read what was loaded
-env = {**os.environ, "DATABASE_URL": A, "DATA_SOURCE": "postgres", "STATE_MAX_ROWS": "50"}
-r = subprocess.run([sys.executable, "-c", """
-import json, state
-cs = state.state.contracts
-json.dumps(cs, allow_nan=False)
-assert len(cs) == 50 and all(isinstance(c['contractId'], str) for c in cs)
-assert all(sum(c['riskFactors'].values()) == c['riskScore'] for c in cs if c['riskScore'] < 100)
-assert cs[0]['riskScore'] >= cs[-1]['riskScore'], 'highest risk first'
-print('bridge ok', len(cs), state.state.ctx_codes())"""], capture_output=True, text=True, env=env, cwd=BACKEND)
-assert r.returncode == 0 and "bridge ok" in r.stdout, r.stderr[-600:]
-empty = pg.new_database()
-r = subprocess.run([sys.executable, "-c", "import state"], capture_output=True, text=True, env={**env, "DATABASE_URL": empty}, cwd=BACKEND)
-assert r.returncode != 0 and "python -m ingest" in r.stderr, r.stderr[-400:]
-print("ok - the app reads the ingested data (strict JSON, riskFactors sum to the score) and says how to load data when there is none")
 
 print("ALL INGEST CHECKS PASSED")

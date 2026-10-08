@@ -28,6 +28,7 @@ CREATE ROLE app_api LOGIN PASSWORD 'CHANGE-ME';
 GRANT USAGE ON SCHEMA ai_recommendations, app_data TO app_api;
 GRANT SELECT, INSERT, UPDATE ON ai_recommendations.users, ai_recommendations.ctx TO app_api;
 GRANT SELECT, INSERT, DELETE ON ai_recommendations.user_ctx TO app_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ai_recommendations.worklist_view TO app_api;   -- one saved view per user
 GRANT SELECT, INSERT ON ai_recommendations.audit_log TO app_api;            -- append-only
 GRANT SELECT, INSERT, UPDATE ON
     ai_recommendations.contract_summary,

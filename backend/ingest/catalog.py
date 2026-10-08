@@ -67,6 +67,9 @@ class Col:
     sortable: bool
     search: str        # "" | Exact | Contains
     personal: bool = False
+    worklist: bool = False   # may a user put this column in their worklist view?
+    default: str = ""        # "Always" | "Yes" | "No": part of the default view?
+    group: str = ""          # the catalog's grouping, used to lay out the contract detail
 
 
 # Columns whose values identify a person or vehicle. They are loaded (the contract manager
@@ -105,9 +108,22 @@ def load_catalog() -> list[Col]:
         cols.append(Col(
             name=phys, source=src, sql_type=sql_type, kind=kind, origin=row["origin"], load=row["load"],
             filter=row["filter"], placement=row["placement"], sortable=row["sortable"] == "Yes", search=row["search"],
-            personal=src in PERSONAL_COLUMNS,
+            personal=src in PERSONAL_COLUMNS, worklist=row["worklist"] == "Yes", default=row["default"], group=row["group"],
         ))
     return cols
+
+
+LABELS = {
+    "contractid": "Contract", "ctxid": "Area", "company": "Customer", "customerid": "Customer ID", "accountid": "Account ID",
+    "end_date_effective": "Expiry", "expiry_bucket": "Expiry window", "days_to_expiry": "Days to expiry",
+    "annual_contract_value": "Annual value", "claims_last_90d": "Claims (90 days)", "risk_score": "Risk",
+    "equipment_type": "Equipment", "unitid": "Unit", "contract_start_date": "Start date", "vehicleid": "Vehicle",
+    "recommended_action": "Recommended action", "action_status": "Action status",
+}
+
+
+def column_label(name: str) -> str:
+    return LABELS.get(name) or name.replace("_", " ").capitalize()
 
 
 def source_columns(cols: list[Col]) -> list[Col]:

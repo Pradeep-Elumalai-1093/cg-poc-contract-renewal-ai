@@ -238,6 +238,7 @@ finally:
     with conn() as c:
         # roles are cluster-wide, so clean up (the database itself is dropped on exit)
         c.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA {S} FROM ai_writer_{suffix}, app_api_{suffix}")
+        c.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA app_data FROM ai_writer_{suffix}, app_api_{suffix}")
         c.execute(f"REVOKE ALL ON SCHEMA {S}, app_data FROM ai_writer_{suffix}, app_api_{suffix}")
         c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA app_data REVOKE SELECT ON TABLES FROM app_api_{suffix}")
         c.execute(f"DROP ROLE ai_writer_{suffix}"); c.execute(f"DROP ROLE app_api_{suffix}")

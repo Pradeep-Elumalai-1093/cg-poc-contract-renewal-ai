@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
-  ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceArea,
-  BarChart, Bar, Legend, LabelList
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, LabelList
 } from "recharts";
-import { Play, X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send, Maximize2, Minimize2, Search } from "lucide-react";
+import { X, ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, RotateCcw, Clock, Coins, Send, Maximize2, Minimize2, Search } from "lucide-react";
 import { api } from "./api.js";
 
 /* ---------------------------------------------------------------
@@ -45,15 +44,10 @@ const T = {
   brandLight: "#4A63A8",
 };
 
-// Mirrors the "score >= 50" split named in the risk x value segmentation
-// (illustrative, per project assumptions - not read from rules.py, which
-// isn't exposed over the API). If that threshold changes server-side, this
-// line and the backend's segment cutoff will drift apart.
-const RISK_QUADRANT_THRESHOLD = 50;
 // Red / Yellow / Green / Blue per the risk x value quadrant scheme. Reuses
 // existing theme tokens (T.info/T.infoBg - already the app's blue, used for
 // "Medium" priority elsewhere) rather than introducing new colors. Changing
-// this one map recolors every segment badge in the app, not just the scatter.
+// this one map recolors every segment badge in the app.
 const SEGMENT_COLOR = { "High Risk": T.risk, "At Risk": T.amber, "Healthy": T.safe, "Standard": T.info };
 const SEGMENT_BG = { "High Risk": T.riskBg, "At Risk": T.amberBg, "Healthy": T.safeBg, "Standard": T.infoBg };
 const BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"];
@@ -73,30 +67,6 @@ const BUCKET_TOOLTIP = {
   "10": "Contract is about to expire in \u226410 days.",
   "Lost": "Contract has already expired or been lost.",
 };
-const DUE_BUCKETS = ["90", "60", "45", "30", "10"];
-
-const CAMPAIGN_TAXONOMY = [
-  { id: "outreach_call", name: "Personal outreach call" },
-  { id: "loyalty_pricing", name: "Discount / loyalty pricing offer" },
-  { id: "service_checkin", name: "Free service check-in" },
-  { id: "restructure", name: "Contract restructuring" },
-  { id: "escalate_am", name: "Escalation to account manager" },
-];
-
-const REGIONS = [
-  { id: "NATT", label: "North America Truck & Trailer", channels: ["Dealer"] },
-  { id: "ETT", label: "Europe Truck & Trailer", channels: ["Dealer", "Direct"] },
-  { id: "APAC_TT", label: "APAC Truck & Trailer", channels: ["Dealer"] },
-];
-
-// Sonnet-class blended placeholder rate, for cost estimation display only.
-const COST_PER_M_INPUT = 3.0;
-const COST_PER_M_OUTPUT = 15.0;
-
-// Display-only - must stay in sync with MAX_RETRIES in backend/agents.py,
-// which is what actually enforces the retry limit. This constant only
-// labels the "limit N" sub-text on the Trace tab's Avg. retries stat.
-const MAX_RETRIES = 2;
 /* ---------------------------------------------------------------
    SMALL UI PRIMITIVES
 ----------------------------------------------------------------*/
@@ -503,20 +473,20 @@ function CachedAgentCard({ title, record, onGenerate, loadingLabel, placeholderL
         {status === "done" && (
           <>
             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{record.data}</div>
-            <button onClick={onGenerate} style={{ marginTop: 10, border: "none", background: "none", color: T.info, fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>Regenerate</button>
+            {onGenerate && <button onClick={onGenerate} style={{ marginTop: 10, border: "none", background: "none", color: T.info, fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>Regenerate</button>}
           </>
         )}
         {status === "loading" && <div style={{ fontSize: 12.5, color: T.inkFaint }}>{loadingLabel}…</div>}
         {status === "error" && (
           <>
             <div style={{ fontSize: 12.5, color: T.risk, marginBottom: 8 }}>{record.error}</div>
-            <button onClick={onGenerate} style={{ border: `1px solid ${T.border}`, background: "#fff", borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Retry</button>
+            {onGenerate && <button onClick={onGenerate} style={{ border: `1px solid ${T.border}`, background: "#fff", borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Retry</button>}
           </>
         )}
         {(!status) && (
           <>
             <div style={{ fontSize: 12.5, color: T.inkFaint, marginBottom: 10 }}>{placeholderLabel}</div>
-            <button onClick={onGenerate} style={{ border: "none", background: T.ink, color: "#fff", borderRadius: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Generate</button>
+            {onGenerate && <button onClick={onGenerate} style={{ border: "none", background: T.ink, color: "#fff", borderRadius: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Generate</button>}
           </>
         )}
       </Card>
@@ -547,61 +517,6 @@ function SegmentBar({ counts }) {
     </div>
   );
 }
-
-// Rolls a list of contracts up into the KPIs the Dashboard/Renewal Prioritization
-// tabs show - one definition of these $ metrics, not one per call site.
-// - "Potential $ at risk" = still-open contract, outreach sent, No response
-//   logged - uncertain, not yet a confirmed loss.
-// - "Lost revenue $" = either the contract already churned (bucket ===
-//   "Lost") or the customer explicitly Declined - both are a realized loss,
-//   not a maybe. Bucket-Lost contracts never get a trace outcome at all
-//   (due_contracts() excludes the "Lost" bucket from the batch pipeline
-//   entirely), so this can't be computed from outcome alone or every Lost
-//   contract would show $0 here.
-// - "Converted $" (field: potentialRevenueValue) = contacted and Engaged.
-function aggregateBookMetrics(list, traceByContract) {
-  const customerIds = new Set();
-  const segmentCounts = { "High Risk": 0, "At Risk": 0, "Healthy": 0, "Standard": 0 };
-  let totalValue = 0, potentialAtRiskValue = 0, lostRevenueValue = 0, lostCount = 0, potentialRevenueValue = 0;
-  list.forEach((c) => {
-    customerIds.add(c.customerId);
-    totalValue += c.contractValue;
-    segmentCounts[c.segment] = (segmentCounts[c.segment] || 0) + 1;
-    const outcome = traceByContract[c.contractId]?.outcome;
-    if (c.bucket === "Lost" || outcome === "Declined") {
-      lostRevenueValue += c.contractValue;
-      lostCount += 1;
-    } else if (outcome === "No response") {
-      potentialAtRiskValue += c.contractValue;
-    } else if (outcome === "Engaged") {
-      potentialRevenueValue += c.contractValue;
-    }
-  });
-  return { customerCount: customerIds.size, contractCount: list.length, totalValue, potentialAtRiskValue, lostRevenueValue, lostCount, potentialRevenueValue, segmentCounts };
-}
-
-// Same shape/logic as the backend's /api/campaigns (assigned/engaged/
-// declined/noResponse per taxonomy name), plus the $ metrics, computed
-// over whatever trace subset the Dashboard filters produce. No bucket-Lost
-// case here - a trace record's milestone can never be "Lost" (same reason
-// as above), so Declined is the only source of lost revenue at this level.
-function aggregateCampaigns(traceList) {
-  const result = {};
-  CAMPAIGN_TAXONOMY.forEach((t) => { result[t.name] = { assigned: 0, assignedValue: 0, engaged: 0, declined: 0, noResponse: 0, potentialAtRiskValue: 0, lostRevenueValue: 0, potentialRevenueValue: 0 }; });
-  traceList.forEach((r) => {
-    const name = (r.recommendation || {}).campaign;
-    const entry = result[name];
-    if (!entry) return;
-    entry.assigned += 1;
-    const value = (r.context || {}).contract_value_usd || 0;
-    entry.assignedValue += value;
-    if (r.outcome === "Engaged") { entry.engaged += 1; entry.potentialRevenueValue += value; }
-    else if (r.outcome === "Declined") { entry.declined += 1; entry.lostRevenueValue += value; }
-    else if (r.outcome === "No response") { entry.noResponse += 1; entry.potentialAtRiskValue += value; }
-  });
-  return result;
-}
-
 
 // Ported from architecture_diagrams.html's <section id="flow">, including its
 // drag-to-rearrange behavior (originally a page-global <script> operating on
@@ -813,295 +728,449 @@ function AgentInspector({ attempts }) {
 }
 
 /* ---------------------------------------------------------------
+   PAGED DATA AND THE WORKLIST
+   The browser never receives "all contracts". The worklist arrives one page at a time
+   (the server keeps the position in an opaque cursor) and is drawn with a window of
+   ~30 rows however far you scroll; every KPI, count and chart comes pre-aggregated
+   from /api/summary. Filters are one object shared by both tabs.
+----------------------------------------------------------------*/
+const SEGMENTS = ["High Risk", "At Risk", "Healthy", "Standard"];
+const PAGE_SIZE = 50;
+const ROW_H = 42;        // fixed row height is what lets the list render only the rows in view
+const LIST_H = 440;
+const OVERSCAN = 8;
+const PREFETCH = 20;     // ask for the next page when this close to the end of what's loaded
+const EMPTY_FILTERS = { area: [], channel: [], segment: [], bucket: null, rb: null, vb: null };
+const ZERO_KPIS = {
+  contracts: 0, customers: 0, value: 0, segments: { "High Risk": 0, "At Risk": 0, Healthy: 0, Standard: 0 },
+  lostCount: 0, lostValue: 0, atRiskValue: 0, convertedValue: 0, actionsNeeded: 0, responseRate: null,
+};
+// Heatmap value rows, top to bottom (the server's band numbers): >= 2x the area's median ... no value.
+const VALUE_ROWS = [3, 2, 1, 0, 4];
+const VALUE_LABEL = { 3: "≥ 2× median", 2: "1–2× median", 1: "0.5–1× median", 0: "< 0.5× median", 4: "No value" };
+
+function useDebounced(value, ms) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+// Pages through /api/worklist. Any change to `params` (or `extraKey`) starts over from the top and
+// cancels whatever was in flight, so a slow answer to an old filter can never overwrite a newer one.
+// Loaded rows stay in memory as the user scrolls: ~1 KB each, so even 20,000 rows is only ~20 MB.
+// (ponytail: no eviction of far-away pages; add a page cap if anyone really scrolls past ~20k rows)
+function useInfiniteRows(params, enabled, extraKey) {
+  const key = JSON.stringify([params, extraKey]);
+  const [s, setS] = useState({ rows: [], cursor: null, done: false, loading: false, error: null, stale: false });
+  const ctrl = useRef(null);
+  const latest = useRef(s);
+  latest.current = s;
+
+  const fetchPage = useCallback((cursor, reset) => {
+    ctrl.current?.abort();
+    const c = new AbortController();
+    ctrl.current = c;
+    setS((p) => ({ ...(reset ? { rows: [], cursor: null, done: false } : p), loading: true, error: null, stale: false }));
+    api.getWorklist({ ...JSON.parse(key)[0], limit: PAGE_SIZE, cursor }, c.signal).then((res) => {
+      if (c.signal.aborted) return;
+      setS((p) => ({ ...p, rows: reset ? res.rows : [...p.rows, ...res.rows], cursor: res.nextCursor, done: !res.nextCursor, loading: false }));
+    }).catch((e) => {
+      if (e.name === "AbortError") return;
+      // 409: a new data load landed mid-scroll - offer a refresh rather than mixing two versions.
+      setS((p) => ({ ...p, loading: false, stale: e.status === 409, error: e.status === 409 ? null : String(e.message || e) }));
+    });
+  }, [key]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    fetchPage(null, true);
+    return () => ctrl.current?.abort();
+  }, [fetchPage, enabled]);
+
+  const loadMore = useCallback(() => {
+    const p = latest.current;
+    if (!p.loading && !p.done && !p.stale && !p.error) fetchPage(p.cursor, false);
+  }, [fetchPage]);
+  const reload = useCallback(() => fetchPage(null, true), [fetchPage]);
+  const retry = useCallback(() => fetchPage(latest.current.cursor, latest.current.rows.length === 0), [fetchPage]);
+  return { ...s, loadMore, reload, retry };
+}
+
+function fmtCell(key, kind, v) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (kind === "bool") return v ? "Yes" : "No";
+  if (kind === "date") return new Date(`${v}T00:00:00`).toLocaleDateString();
+  if (key === "annual_contract_value") return `$${Math.round(v).toLocaleString()}`;
+  if (typeof v === "number") return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return String(v);
+}
+
+function fmtDetail(v) {
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (typeof v === "number") return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return String(v);
+}
+
+function StatusCell({ rec }) {
+  if (!rec) return <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>;
+  if (rec.escalated) {
+    return (
+      <span style={{ display: "flex", gap: 5, alignItems: "center" }}>
+        <Badge text="Escalated" color={T.risk} bg={T.riskBg} />
+        {rec.status === "Action required"
+          ? <Badge text="Action required" color={T.amber} bg={T.amberBg} />
+          : <Badge text="Done" color={T.safe} bg={T.safeBg} />}
+      </span>
+    );
+  }
+  return <Badge text="Recommended" color={T.safe} bg={T.safeBg} />;
+}
+
+// The seven expiry milestones; clicking one filters the worklist and every figure below it.
+function BucketCards({ counts, value, onPick }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 18 }}>
+      {BUCKETS.map((b) => (
+        <Card
+          key={b}
+          onClick={() => onPick(b)}
+          title={BUCKET_TOOLTIP[b]}
+          style={{ padding: "12px 14px", borderColor: value === b ? T.ink : T.border, borderWidth: value === b ? 1.5 : 1 }}
+        >
+          <div style={{ fontSize: 11, color: T.inkFaint, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>{BUCKET_LABEL[b]}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2, color: b === "Lost" ? T.risk : T.ink }}>{(counts?.[b] ?? 0).toLocaleString()}</div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// One filter state for the whole page: it narrows the worklist, the KPIs, the charts and the
+// bucket cards on both tabs at once.
+function FilterBar({ filters, onChange, areaOptions }) {
+  const set = (k) => (v) => onChange((f) => ({ ...f, [k]: v }));
+  const cell = filters.rb !== null && filters.vb !== null;
+  const active = filters.area.length || filters.channel.length || filters.segment.length || filters.bucket || filters.rb !== null || filters.vb !== null;
+  const chip = { display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, background: T.brandBg, color: T.brand, borderRadius: 99, padding: "4px 6px 4px 10px" };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>Filters</span>
+      {areaOptions.length > 1 && <MultiSelect label="areas" options={areaOptions} selected={filters.area} onChange={set("area")} />}
+      <MultiSelect label="channels" options={[{ value: "Dealer", label: "Dealer" }, { value: "Direct", label: "Direct" }]} selected={filters.channel} onChange={set("channel")} />
+      <MultiSelect label="segments" options={SEGMENTS.map((s) => ({ value: s, label: s }))} selected={filters.segment} onChange={set("segment")} />
+      {(cell || filters.rb !== null) && (
+        <span style={chip}>
+          Risk {filters.rb * 10}–{filters.rb * 10 + 9}{filters.vb !== null && ` · ${VALUE_LABEL[filters.vb]}`}
+          <button onClick={() => onChange((f) => ({ ...f, rb: null, vb: null }))} style={{ border: "none", background: "none", cursor: "pointer", display: "flex", padding: 0 }}><X size={13} color={T.brand} /></button>
+        </span>
+      )}
+      {active && (
+        <button onClick={() => onChange(EMPTY_FILTERS)} style={{ border: "none", background: "none", fontSize: 12, color: T.info, cursor: "pointer", whiteSpace: "nowrap" }}>Clear all filters</button>
+      )}
+    </div>
+  );
+}
+
+// Replaces the old scatter plot (one SVG point per contract - unusable at 300K): the same two
+// questions - how risky, how valuable - answered as counts per cell. Columns are risk bands
+// (the heavy lines are the 30 / 50 / 70 segment cut-offs); rows are contract value against the
+// median of the contract's own area (the heavy line is the median).
+function RiskValueHeatmap({ cells, rb, vb, onPick, mode }) {
+  const at = {};
+  (cells || []).forEach((c) => { at[`${c.rb}:${c.vb}`] = c; });
+  const amount = (c) => (mode === "value" ? c.value : c.n);
+  const max = Math.max(1, ...(cells || []).map(amount));
+  const fmt = (n) => (mode === "value" ? (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(Math.round(n))) : n.toLocaleString());
+  const cutoff = (band) => (band === 3 || band === 5 || band === 7 ? `2px solid ${T.borderStrong}` : `1px solid ${T.border}`);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "92px repeat(10, minmax(0, 1fr))", gap: 0, fontSize: 10.5 }}>
+      {VALUE_ROWS.map((v) => (
+        <React.Fragment key={v}>
+          <div style={{ color: T.inkFaint, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 8, height: 34 }}>{VALUE_LABEL[v]}</div>
+          {Array.from({ length: 10 }, (_, band) => {
+            const c = at[`${band}:${v}`];
+            const share = c ? amount(c) / max : 0;
+            const picked = rb === band && vb === v;
+            return (
+              <div
+                key={band}
+                onClick={() => c && onPick(band, v)}
+                title={c ? `${c.n.toLocaleString()} contracts · $${Math.round(c.value).toLocaleString()}` : "none"}
+                style={{
+                  position: "relative", height: 34, cursor: c ? "pointer" : "default", borderLeft: cutoff(band), borderBottom: v === 2 ? `2px solid ${T.borderStrong}` : `1px solid ${T.border}`,
+                  outline: picked ? `2px solid ${T.ink}` : "none", outlineOffset: -2, display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                {c && <div style={{ position: "absolute", inset: 0, background: T.brand, opacity: 0.07 + 0.83 * share }} />}
+                {c && <span style={{ position: "relative", fontWeight: 600, color: share > 0.45 ? "#fff" : T.ink }}>{fmt(amount(c))}</span>}
+              </div>
+            );
+          })}
+        </React.Fragment>
+      ))}
+      <div />
+      {Array.from({ length: 10 }, (_, band) => (
+        <div key={band} style={{ textAlign: "center", color: T.inkFaint, paddingTop: 4 }}>{band * 10}</div>
+      ))}
+    </div>
+  );
+}
+
+function Worklist({ params, view, extraKey, total, search, onSearch, onSort, onColumns, onOpen, overrides, areaLabel }) {
+  const list = useInfiniteRows(params, !!view, extraKey);
+  const { rows, done, loading, error, stale, loadMore } = list;
+  const box = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [note, setNote] = useState(null);
+  const key = JSON.stringify([params, extraKey]);
+
+  useEffect(() => { // a new query starts at the top
+    if (box.current) box.current.scrollTop = 0;
+    setScrollTop(0);
+  }, [key]);
+
+  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
+  const end = Math.min(rows.length, Math.ceil((scrollTop + LIST_H) / ROW_H) + OVERSCAN);
+  useEffect(() => { // near the end of what's loaded: fetch the next page
+    if (rows.length && end >= rows.length - PREFETCH) loadMore();
+  }, [end, rows.length, done, loading, loadMore]);
+
+  const info = Object.fromEntries(view.available.map((a) => [a.key, a]));
+  const label = { contractid: "Contract", risk_score: "Risk", ...Object.fromEntries(view.available.map((a) => [a.key, a.label])) };
+  const sortable = new Set([...view.available.filter((a) => a.sortable).map((a) => a.key), "risk_score"]);
+  const virtual = ["recommended_action", "action_status"];
+  const columns = [
+    ...view.columns.filter((c) => c === "company"), "contractid",
+    ...view.columns.filter((c) => c !== "company" && !virtual.includes(c)), "risk_score",
+    ...view.columns.filter((c) => virtual.includes(c)),
+  ];
+  const sort = [view.sort.key, view.sort.dir, onSort];
+
+  const cell = (r, c) => {
+    const rec = overrides[r.id] ? { ...(r.rec || {}), ...overrides[r.id] } : r.rec;
+    if (c === "company") return <span style={{ fontWeight: 600 }}>{r.company ?? "—"}</span>;
+    if (c === "contractid") return <span style={{ color: T.inkMuted, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{r.contractid}</span>;
+    if (c === "risk_score") return r.segment ? <Badge text={`${r.segment} · ${r.risk_score ?? "—"}`} color={SEGMENT_COLOR[r.segment]} bg={SEGMENT_BG[r.segment]} /> : "—";
+    if (c === "ctxid") return <span title={areaLabel(r.ctxid)}>{r.ctxid ?? "—"}</span>;
+    if (c === "recommended_action") return <Badge text={rec?.name || "-"} bg={T.purpleBg} />;
+    if (c === "action_status") return <StatusCell rec={rec} />;
+    return fmtCell(c, info[c]?.kind, r[c]);
+  };
+
+  const pad = (h) => <tr style={{ height: h }}><td colSpan={columns.length + 1} style={{ padding: 0, border: "none" }} /></tr>;
+  return (
+    <Card style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700 }}>
+          Worklist
+          <span style={{ fontWeight: 500, color: T.inkFaint, fontSize: 12, marginLeft: 8 }}>
+            {params.q ? `${rows.length.toLocaleString()}${done ? "" : "+"} matching` : total != null ? `${total.toLocaleString()} contracts` : ""}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {note && <span style={{ fontSize: 11.5, color: T.amber }}>{note}</span>}
+          <MultiSelect
+            label="columns"
+            options={view.available.map((a) => ({ value: a.key, label: a.label }))}
+            selected={view.columns}
+            onChange={(next) => {
+              if (next.length > view.maxColumns) { setNote(`At most ${view.maxColumns} columns`); return; }
+              setNote(null);
+              onColumns(next);
+            }}
+          />
+          <div style={{ position: "relative" }}>
+            <Search size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: T.inkFaint }} />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+              placeholder="Search customer, contract, unit…"
+              style={{ border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 10px 6px 28px", fontSize: 12.5, fontFamily: "inherit", width: 230, color: T.ink }}
+            />
+            {search && (
+              <button onClick={() => onSearch("")} style={{ position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", padding: 2, color: T.inkFaint, display: "flex" }}>
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      {stale && (
+        <div style={{ padding: "8px 16px", background: T.amberBg, fontSize: 12.5, display: "flex", gap: 10, alignItems: "center" }}>
+          New data has been loaded since this list was opened.
+          <button onClick={list.reload} style={{ ...smallBtn }}>Refresh</button>
+        </div>
+      )}
+      <div ref={box} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)} style={{ height: LIST_H, overflowY: "auto" }}>
+        <table className="stickyhead">
+          <thead><tr>
+            {columns.map((c) => (sortable.has(c)
+              ? <SortTh key={c} label={label[c] ?? c} sortKey={c} sort={sort} />
+              : <th key={c} style={{ whiteSpace: "nowrap" }}>{label[c] ?? c}</th>))}
+            <th></th>
+          </tr></thead>
+          <tbody>
+            {start > 0 && pad(start * ROW_H)}
+            {rows.slice(start, end).map((r) => (
+              <tr key={r.id} className="rowhover" style={{ cursor: "pointer", height: ROW_H }} onClick={() => onOpen(r.id)}>
+                {columns.map((c) => (
+                  <td key={c} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>{cell(r, c)}</td>
+                ))}
+                <td><ChevronRight size={15} color={T.inkFaint} /></td>
+              </tr>
+            ))}
+            {end < rows.length && pad((rows.length - end) * ROW_H)}
+          </tbody>
+        </table>
+        <div style={{ textAlign: "center", padding: 14, color: T.inkFaint, fontSize: 12.5 }}>
+          {loading && (rows.length ? "Loading more…" : "Loading…")}
+          {error && <>{error} <button onClick={list.retry} style={smallBtn}>Retry</button></>}
+          {!loading && !error && rows.length === 0 && (params.q ? `No contracts match "${params.q}".` : "No contracts match the current filters.")}
+          {!loading && !error && done && rows.length > 0 && `End of list · ${rows.length.toLocaleString()} contracts`}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------
    MAIN APP
    All data manipulation and AI orchestration now happens in FastAPI.
    This component only fetches, displays, and triggers actions.
 ----------------------------------------------------------------*/
 function ContractRenewalPOC({ user, onLogout }) {
-  const [contracts, setContracts] = useState([]);
-  const [trace, setTrace] = useState([]);
-  const [metrics, setMetrics] = useState({ firstPassRate: 0, avgRetries: "0.00", escalationRate: 0, avgLatency: 0, totalCost: 0, responseRate: null, totalRuns: 0 });
+  const [filters, setFilters] = useState(EMPTY_FILTERS);   // one filter state, shared by both tabs
+  const [summary, setSummary] = useState(null);            // aggregates for the current filters
+  const [view, setView] = useState(null);                  // this user's one saved worklist view
+  const [areaNames, setAreaNames] = useState({});
   const [modelInfo, setModelInfo] = useState(null);
-  const [ticketSummaries, setTicketSummaries] = useState({});
-  const [customerSummaries, setCustomerSummaries] = useState({});
   const [tab, setTab] = useState("renewal-prioritization");
-  const [bucketFilter, setBucketFilter] = useState(null);
-  const [regionFilter, setRegionFilter] = useState([]); // empty = all regions
-  const [channelFilter, setChannelFilter] = useState([]); // empty = all channels
-  const [worklistSearch, setWorklistSearch] = useState("");
-  // Dashboard tab's own Global -> Regional -> Segment -> Milestone drill-down.
-  // Kept separate from the Renewal Prioritization filters above - the two tabs
-  // answer different questions, so filtering one shouldn't silently filter
-  // the other when you switch tabs.
-  const [dashRegionFilter, setDashRegionFilter] = useState([]);
-  const [dashChannelFilter, setDashChannelFilter] = useState([]);
-  const [dashSegmentFilter, setDashSegmentFilter] = useState([]);
-  const [dashBucketFilter, setDashBucketFilter] = useState(null);
-  const [selected, setSelected] = useState(null);
-  // Which chart, if any, is currently blown up into the full-screen modal.
-  const [maximizedChart, setMaximizedChart] = useState(null); // "scatter" | "campaign-bar" | null
+  const [search, setSearch] = useState("");
+  const q = useDebounced(search.trim().length >= 2 ? search.trim() : "", 300);   // the server searches; under 2 characters it doesn't
+  const [selected, setSelected] = useState(null);          // id of the open contract
+  const [detail, setDetail] = useState(null);              // everything the drawer shows - fetched when a contract is opened
+  const [detailError, setDetailError] = useState(null);
+  const [contact, setContact] = useState(null);            // contact data, only after an explicit (audited) request
+  const [overrides, setOverrides] = useState({});          // the rep's own edits, shown in the list immediately
+  const [refresh, setRefresh] = useState(0);               // bump to recompute the summary after an edit
+  const [heatMode, setHeatMode] = useState("contracts");
+  const [maximizedChart, setMaximizedChart] = useState(null); // "campaign-bar" | null
   // Which tab is active inside the contract detail drawer - reset to the
   // default whenever a different contract is opened, so switching contracts
   // doesn't leave you stranded on a tab that made sense for the last one.
   const [drawerTab, setDrawerTab] = useState("action");
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [apiError, setApiError] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const fail = (e) => { if (e?.name !== "AbortError") setApiError(String(e?.message || e)); };
 
-  const refreshAll = useCallback(async () => {
-    try {
-      const [c, t, m, mi, ts, cust] = await Promise.all([
-        api.getContracts(), api.getTrace(), api.getMetrics(),
-        api.getModelInfo(), api.getTicketSummaries(), api.getCustomerSummaries(),
-      ]);
-      if (!Array.isArray(c)) {
-        // /api/contracts didn't return a list - most likely the backend hit
-        // an exception while building state.contracts (e.g. a data-loading
-        // error) and returned an error body instead. Surface that clearly
-        // rather than silently corrupting state and crashing later, deep in
-        // an unrelated useMemo, with no indication of the real cause.
-        throw new Error(
-          `/api/contracts did not return a list (got ${typeof c}). Check the backend logs - ` +
-          `this usually means contract loading threw an exception (e.g. DATA_SOURCE=local pointing ` +
-          `at a missing/misconfigured file).`
-        );
-      }
-      setContracts(c); setTrace(t); setMetrics(m);
-      setModelInfo(mi); setTicketSummaries(ts); setCustomerSummaries(cust);
-    } catch (e) {
-      setApiError(String(e.message || e));
-    }
-  }, []);
-
-  const runTicketSummary = async (contractId) => {
-    setTicketSummaries((prev) => ({ ...prev, [contractId]: { status: "loading" } }));
-    try {
-      const record = await api.runTicketSummary(contractId);
-      setTicketSummaries((prev) => ({ ...prev, [contractId]: record }));
-    } catch (e) {
-      setTicketSummaries((prev) => ({ ...prev, [contractId]: { status: "error", error: String(e.message || e) } }));
-    }
-  };
-
-  // Summaries are cached server-side per (customer, CTX) so one area's manager
-  // never sees a summary that narrates another area's contracts.
-  const summaryKey = (customerId, ctx) => `${customerId}|${ctx || ""}`;
-  const runCustomerSummary = async (customerId, ctx) => {
-    const key = summaryKey(customerId, ctx);
-    setCustomerSummaries((prev) => ({ ...prev, [key]: { status: "loading" } }));
-    try {
-      const record = await api.runCustomerSummary(customerId, ctx);
-      setCustomerSummaries((prev) => ({ ...prev, [key]: record }));
-    } catch (e) {
-      setCustomerSummaries((prev) => ({ ...prev, [key]: { status: "error", error: String(e.message || e) } }));
-    }
-  };
-
-  // Initial load - also check whether a batch is already running server-side
-  // (e.g. the page was refreshed mid-run) and resume polling if so, instead
-  // of losing track of it.
-  React.useEffect(() => {
+  // Initial load: the saved view, the model description and the area names - small, and nothing about contracts.
+  useEffect(() => {
     (async () => {
-      await refreshAll();
       try {
-        const status = await api.getBatchStatus();
-        if (status.running) {
-          setProgress({ done: status.done, total: status.total });
-          setRunning(true);
-        }
-      } catch (e) {
-        // non-fatal - just means we can't confirm batch status on load
-      }
+        const [v, mi] = await Promise.all([api.getWorklistView(), api.getModelInfo()]);
+        setView(v); setModelInfo(mi);
+        const names = {};
+        if (user.allCtx) (await api.getAdminCtx()).ctxs.forEach((c) => { names[c.code] = c.name; });
+        else user.ctxs.forEach((c) => { names[c.code] = c.name; });
+        setAreaNames(names);
+      } catch (e) { fail(e); }
       setLoaded(true);
     })();
-  }, [refreshAll]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // While a batch is running, poll status and refresh once it completes.
-  React.useEffect(() => {
-    if (!running) return;
-    const interval = setInterval(async () => {
-      try {
-        const status = await api.getBatchStatus();
-        setProgress({ done: status.done, total: status.total });
-        if (status.lastError) setApiError(status.lastError);
-        if (!status.running) {
-          setRunning(false);
-          await refreshAll();
-        }
-      } catch (e) {
-        setApiError(String(e.message || e));
-        setRunning(false);
-      }
-    }, 700);
-    return () => clearInterval(interval);
-  }, [running, refreshAll]);
+  // KPIs, bucket counts, heatmap, per-area and campaign figures: one aggregate query per change of filter.
+  useEffect(() => {
+    const c = new AbortController();
+    api.getSummary(filters, c.signal).then(setSummary).catch(fail);
+    return () => c.abort();
+  }, [JSON.stringify(filters), refresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  React.useEffect(() => {
-    setDrawerTab("action");
+  // Opening a contract fetches everything about it; nothing but the list row is held beforehand.
+  useEffect(() => {
+    setDrawerTab("action"); setContact(null); setDetail(null); setDetailError(null);
+    if (!selected) return undefined;
+    const c = new AbortController();
+    api.getContract(selected, c.signal).then(setDetail).catch((e) => { if (e.name !== "AbortError") setDetailError(String(e.message || e)); });
+    return () => c.abort();
   }, [selected]);
 
-  const traceByContract = useMemo(() => {
-    const m = {};
-    trace.forEach((t) => { m[t.contractId] = t; });
-    return m;
-  }, [trace]);
+  const areaLabel = (code) => (code == null ? "No area" : areaNames[code] && areaNames[code] !== code ? `${code} · ${areaNames[code]}` : code);
+  const areaOptions = Object.keys(areaNames).sort().map((c) => ({ value: c, label: areaLabel(c) }));
 
-  const dueContracts = useMemo(
-    () => contracts.filter((c) => DUE_BUCKETS.includes(c.bucket) && c.lastMilestoneProcessed !== c.bucket),
-    [contracts]
-  );
-
-  const runBatch = useCallback(async () => {
-    setApiError(null);
-    setRunning(true); // disable the button immediately, before the network round-trip completes
+  // Sort changes apply at once and are saved in the background. A column change is saved FIRST
+  // (the server reads the saved view to decide which columns to send), then the list reloads.
+  const onSort = (key) => {
+    const textual = view.available.find((a) => a.key === key)?.kind === "text";   // names read A-Z first; numbers and dates biggest / latest first
+    const sort = { key, dir: key === view.sort.key ? (view.sort.dir === "asc" ? "desc" : "asc") : (textual ? "asc" : "desc") };
+    setView((v) => ({ ...v, sort }));
+    api.saveWorklistView({ columns: view.columns, sort }).catch(fail);
+  };
+  const onColumns = async (columns) => {
     try {
-      const res = await api.runBatch();
-      setProgress({ done: 0, total: res.due });
-    } catch (e) {
-      const message = String(e.message || e);
-      if (message.toLowerCase().includes("already running")) {
-        // Someone else (or a prior click before this one landed) already
-        // started a batch - stay in the running state, the poll effect
-        // above will pick up real progress and clear it when done.
-      } else {
-        setApiError(message);
-        setRunning(false);
-      }
-    }
-  }, []);
+      const saved = await api.saveWorklistView({ columns, sort: view.sort });
+      setView((v) => ({ ...v, columns: saved.columns }));
+    } catch (e) { fail(e); }
+  };
+  const onPickCell = (rb, vb) => setFilters((f) => (f.rb === rb && f.vb === vb ? { ...f, rb: null, vb: null } : { ...f, rb, vb }));
 
-  // Region/channel only - bucket cards need this unfiltered by bucketFilter
-  // itself, otherwise selecting one bucket would zero out every other card.
-  const regionChannelContracts = useMemo(() => {
-    return contracts.filter((c) => {
-      const regionOk = regionFilter.length === 0 || regionFilter.includes(c.region);
-      const channelOk = channelFilter.length === 0 || channelFilter.includes(c.channel);
-      return regionOk && channelOk;
-    });
-  }, [contracts, regionFilter, channelFilter]);
+  // What a rep records. The drawer and the list update at once; the summary is recomputed from the
+  // database a moment later. If the save fails, the contract is re-read so the screen shows the truth.
+  const patchTrace = (contractId, patch) => {
+    setDetail((d) => (d && d.contract.contractId === contractId && d.trace ? { ...d, trace: { ...d.trace, ...patch } } : d));
+    setOverrides((o) => ({
+      ...o,
+      [contractId]: { ...o[contractId], ...(patch.outcome !== undefined && { outcome: patch.outcome }), ...(patch.actionStatus !== undefined && { status: patch.actionStatus }) },
+    }));
+  };
+  const revert = (contractId, e) => {
+    fail(e);
+    setOverrides((o) => { const n = { ...o }; delete n[contractId]; return n; });
+    api.getContract(contractId).then(setDetail).catch(() => {});
+  };
+  const setOutcome = async (contractId, outcome) => {
+    patchTrace(contractId, { outcome });
+    try { await api.sendFeedback(contractId, outcome); setRefresh((n) => n + 1); } catch (e) { revert(contractId, e); }
+  };
+  const noteTimer = useRef(null);
+  const setNote = (contractId, note) => {   // typed text is saved once typing pauses, not on every keystroke
+    patchTrace(contractId, { outcomeNote: note });
+    clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => api.sendFeedback(contractId, undefined, note).catch((e) => revert(contractId, e)), 600);
+  };
+  const toggleActionStatus = async (contractId, current) => {
+    const next = current === "Action done" ? "Action required" : "Action done";
+    patchTrace(contractId, { actionStatus: next });
+    try { await api.setActionStatus(contractId, next); setRefresh((n) => n + 1); } catch (e) { revert(contractId, e); }
+  };
+  const revealContact = async (contractId) => {
+    setContact("loading");
+    try { setContact((await api.revealContact(contractId)).contact); } catch (e) { setContact(null); fail(e); }
+  };
 
-  // The actual page-wide filter: region + channel + bucket. Everything that
-  // should respect the bucket-card click reads from this, not from
-  // regionChannelContracts, so the filter only has to be defined once.
-  const filteredContracts = useMemo(() => {
-    if (!bucketFilter) return regionChannelContracts;
-    return regionChannelContracts.filter((c) => c.bucket === bucketFilter);
-  }, [regionChannelContracts, bucketFilter]);
-
-  // Computed client-side (not fetched from /api/outcome-by-risk-bucket) so it
-  // stays in sync with the region/channel/bucket filters instantly. Each trace
-  // record's own context.region/context.channel/context.milestone is a
-  // snapshot taken at the time that recommendation ran, which is what
-  // filtering should key off - not the contract's current fields (though
-  // those are the same in practice, since none of them change after generation).
-  const filteredOutcomeByRiskBucket = useMemo(() => {
-    const bucketEdges = [[0, 19], [20, 39], [40, 59], [60, 79], [80, 100]];
-    const labels = ["0-19", "20-39", "40-59", "60-79", "80-100"];
-    const engaged = [0, 0, 0, 0, 0];
-    const notEngaged = [0, 0, 0, 0, 0];
-    const revenueLost = [0, 0, 0, 0, 0];       // Declined only - realized loss, not "no response" (uncertain)
-    const revenueConverted = [0, 0, 0, 0, 0];  // Engaged
-    let totalWithOutcome = 0;
-
-    trace.forEach((r) => {
-      if (!r.outcome) return;
-      const ctx = r.context || {};
-      const regionOk = regionFilter.length === 0 || regionFilter.includes(ctx.region);
-      const channelOk = channelFilter.length === 0 || channelFilter.includes(ctx.channel);
-      const bucketOk = !bucketFilter || ctx.milestone === bucketFilter;
-      if (!regionOk || !channelOk || !bucketOk) return;
-      const score = ctx.risk_score;
-      if (score == null) return;
-      totalWithOutcome++;
-      const value = ctx.contract_value_usd || 0;
-      for (let i = 0; i < bucketEdges.length; i++) {
-        const [lo, hi] = bucketEdges[i];
-        if (score >= lo && score <= hi) {
-          if (r.outcome === "Engaged") { engaged[i]++; revenueConverted[i] += value; }
-          else { notEngaged[i]++; if (r.outcome === "Declined") revenueLost[i] += value; }
-          break;
-        }
-      }
-    });
-
-    return { buckets: labels, engaged, notEngaged, revenueLost, revenueConverted, totalWithOutcome };
-  }, [trace, regionFilter, channelFilter, bucketFilter]);
-
-  const bucketCounts = useMemo(() => {
-    const c = {};
-    BUCKETS.forEach((b) => (c[b] = 0));
-    regionChannelContracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
-    return c;
-  }, [regionChannelContracts]);
-
-  // Dashboard tab: region/channel/segment only - bucket cards here need this
-  // unfiltered by dashBucketFilter itself, same reasoning as regionChannelContracts above.
-  const dashRegionChannelSegmentContracts = useMemo(() => {
-    return contracts.filter((c) => {
-      const regionOk = dashRegionFilter.length === 0 || dashRegionFilter.includes(c.region);
-      const channelOk = dashChannelFilter.length === 0 || dashChannelFilter.includes(c.channel);
-      const segmentOk = dashSegmentFilter.length === 0 || dashSegmentFilter.includes(c.segment);
-      return regionOk && channelOk && segmentOk;
-    });
-  }, [contracts, dashRegionFilter, dashChannelFilter, dashSegmentFilter]);
-
-  const dashFilteredContracts = useMemo(() => {
-    if (!dashBucketFilter) return dashRegionChannelSegmentContracts;
-    return dashRegionChannelSegmentContracts.filter((c) => c.bucket === dashBucketFilter);
-  }, [dashRegionChannelSegmentContracts, dashBucketFilter]);
-
-  const dashBucketCounts = useMemo(() => {
-    const c = {};
-    BUCKETS.forEach((b) => (c[b] = 0));
-    dashRegionChannelSegmentContracts.forEach((ct) => { c[ct.bucket] = (c[ct.bucket] || 0) + 1; });
-    return c;
-  }, [dashRegionChannelSegmentContracts]);
-
-  // Trace-side counterpart for the campaign section - filters on each trace
-  // record's own snapshotted context (region/channel/segment/milestone), same
-  // design principle already used by filteredOutcomeByRiskBucket above: the
-  // snapshot at recommendation time, not the contract's current live fields.
-  const dashFilteredTrace = useMemo(() => {
-    return trace.filter((r) => {
-      const ctx = r.context || {};
-      const regionOk = dashRegionFilter.length === 0 || dashRegionFilter.includes(ctx.region);
-      const channelOk = dashChannelFilter.length === 0 || dashChannelFilter.includes(ctx.channel);
-      const segmentOk = dashSegmentFilter.length === 0 || dashSegmentFilter.includes(ctx.segment);
-      const bucketOk = !dashBucketFilter || ctx.milestone === dashBucketFilter;
-      return regionOk && channelOk && segmentOk && bucketOk;
-    });
-  }, [trace, dashRegionFilter, dashChannelFilter, dashSegmentFilter, dashBucketFilter]);
-
-  const dashGlobalMetrics = useMemo(
-    () => aggregateBookMetrics(dashFilteredContracts, traceByContract),
-    [dashFilteredContracts, traceByContract]
-  );
-
-  const dashRegionsToShow = useMemo(
-    () => (dashRegionFilter.length === 0 ? REGIONS : REGIONS.filter((r) => dashRegionFilter.includes(r.id))),
-    [dashRegionFilter]
-  );
-
+  const k = summary?.kpis ?? ZERO_KPIS;
+  // Same shape the Dashboard markup below has always read.
+  const dashGlobalMetrics = {
+    customerCount: k.customers, contractCount: k.contracts, segmentCounts: k.segments, totalValue: k.value, lostCount: k.lostCount,
+    lostRevenueValue: k.lostValue, potentialRevenueValue: k.convertedValue, potentialAtRiskValue: k.atRiskValue,
+  };
   const dashCampaignData = useMemo(() => {
-    const agg = aggregateCampaigns(dashFilteredTrace);
-    return CAMPAIGN_TAXONOMY.map((t) => {
-      const s = agg[t.name];
-      const responseCount = s.engaged + s.declined; // customer responded, either way - same definition the old Campaigns tab used
+    const pct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
+    return (summary?.campaigns ?? []).map((s) => {
+      const responseCount = s.engaged + s.declined; // customer responded, either way
       return {
-        name: t.name, Assigned: s.assigned, Engaged: s.engaged, Declined: s.declined, "No response": s.noResponse,
+        name: s.name, Assigned: s.assigned, Engaged: s.engaged, Declined: s.declined, "No response": s.noResponse,
         declined: s.declined, noResponse: s.noResponse, responseCount,
-        // Each bar's own rate is that bar's count over Assigned - previously
-        // every bar showed the same combined (engaged+declined)/assigned
-        // figure, which was only ever correct for one of the three bars.
-        engagedRate: s.assigned ? Math.round((s.engaged / s.assigned) * 100) : 0,
-        declinedRate: s.assigned ? Math.round((s.declined / s.assigned) * 100) : 0,
-        noResponseRate: s.assigned ? Math.round((s.noResponse / s.assigned) * 100) : 0,
-        responseRate: s.assigned ? Math.round((responseCount / s.assigned) * 100) : 0,
-        assignedValue: s.assignedValue, potentialAtRiskValue: s.potentialAtRiskValue, lostRevenueValue: s.lostRevenueValue, potentialRevenueValue: s.potentialRevenueValue,
+        // Each bar's own rate is that bar's count over Assigned.
+        engagedRate: pct(s.engaged, s.assigned), declinedRate: pct(s.declined, s.assigned),
+        noResponseRate: pct(s.noResponse, s.assigned), responseRate: pct(responseCount, s.assigned),
+        assignedValue: s.assignedValue, potentialAtRiskValue: s.atRiskValue, lostRevenueValue: s.lostValue, potentialRevenueValue: s.convertedValue,
       };
     });
-  }, [dashFilteredTrace]);
+  }, [summary]);
 
   // Shared by the inline card and the maximize modal - same chart, just a
   // different height, so the two views can't drift apart.
@@ -1174,8 +1243,7 @@ function ContractRenewalPOC({ user, onLogout }) {
   );
 
   // Totals across every campaign, for the summary stat row above the chart -
-  // sums dashCampaignData rather than re-deriving from dashFilteredTrace, so
-  // there's one pass over the trace data, not two.
+  // sums dashCampaignData rather than re-deriving it from the summary a second time.
   const dashCampaignTotals = useMemo(() => {
     return dashCampaignData.reduce((acc, row) => {
       acc.assigned += row.Assigned;
@@ -1200,145 +1268,8 @@ function ContractRenewalPOC({ user, onLogout }) {
     potentialRevenueValue: (r) => r.potentialRevenueValue,
   }), [dashCampaignData, campaignSortKey, campaignSortDir]);
 
-  const worklist = useMemo(() => {
-    return [...filteredContracts].sort((a, b) => b.riskScore - a.riskScore);
-  }, [filteredContracts]);
-
-  // Search narrows the worklist further, on top of the region/channel/bucket
-  // filters - matches customer name, contract ID, region, channel, or the
-  // recommended campaign type.
-  const searchedWorklist = useMemo(() => {
-    const q = worklistSearch.trim().toLowerCase();
-    if (!q) return worklist;
-    return worklist.filter((c) =>
-      c.customerName.toLowerCase().includes(q) ||
-      c.contractId.toLowerCase().includes(q) ||
-      c.region.toLowerCase().includes(q) ||
-      c.channel.toLowerCase().includes(q) ||
-      (traceByContract[c.contractId]?.recommendation?.campaign || "").toLowerCase().includes(q)
-    );
-  }, [worklist, worklistSearch, traceByContract]);
-
-  const worklistSort = useSort("riskScore", "desc");
-  const [worklistSortKey, worklistSortDir] = worklistSort;
-  const sortedWorklist = useMemo(() => sortRows(searchedWorklist, worklistSortKey, worklistSortDir, {
-    customerName: (c) => c.customerName,
-    region: (c) => c.region,
-    channel: (c) => c.channel,
-    bucket: (c) => BUCKETS.indexOf(c.bucket),
-    riskScore: (c) => c.riskScore,
-    contractValue: (c) => c.contractValue,
-    recommendation: (c) => traceByContract[c.contractId]?.recommendation?.campaign || "",
-    status: (c) => {
-      const t = traceByContract[c.contractId];
-      if (!t) return 0;
-      if (t.error) return 1;
-      if (t.escalated) return t.actionStatus === "Action required" ? 2 : 3;
-      return t.pass ? 4 : 1;
-    },
-  }), [searchedWorklist, worklistSortKey, worklistSortDir, traceByContract]);
-
-  const traceSort = useSort(null, "asc");
-  const [traceSortKey, traceSortDir] = traceSort;
-  const sortedTraceRows = useMemo(() => sortRows([...trace].reverse(), traceSortKey, traceSortDir, {
-    customer: (r) => contracts.find((c) => c.contractId === r.contractId)?.customerName || "",
-    milestone: (r) => BUCKETS.indexOf(r.milestone),
-    campaign: (r) => r.recommendation?.campaign || "",
-    retryCount: (r) => r.retryCount,
-    result: (r) => (r.error ? 0 : r.escalated ? 1 : r.pass ? 3 : 2),
-    latencyMs: (r) => r.latencyMs,
-    costUsd: (r) => r.costUsd,
-  }), [trace, traceSortKey, traceSortDir, contracts]);
-
-  const scatterData = useMemo(() => filteredContracts.map((c) => ({
-    x: c.riskScore, y: c.contractValue, tier: c.segment, id: c.contractId, name: c.customerName,
-  })), [filteredContracts]);
-
-  // Horizontal quadrant split - median of whatever's currently filtered,
-  // so it tracks the visible book rather than a fixed dollar figure.
-  const medianContractValue = useMemo(() => {
-    const vals = filteredContracts.map((c) => c.contractValue).sort((a, b) => a - b);
-    if (!vals.length) return 0;
-    const mid = Math.floor(vals.length / 2);
-    return vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
-  }, [filteredContracts]);
-
-  // Explicit y-axis ceiling (rounded up, +10% headroom) so the quadrant tint
-  // rectangles and the axis domain agree exactly - recharts' auto domain
-  // wouldn't necessarily line up with a hand-picked ReferenceArea bound.
-  const scatterYMax = useMemo(() => {
-    const maxVal = Math.max(1, ...scatterData.map((d) => d.y));
-    return Math.ceil((maxVal * 1.1) / 5000) * 5000;
-  }, [scatterData]);
-
-  // Shared by the inline card and the maximize modal - one definition of the
-  // chart, just rendered at a different height, so the two views can't drift.
-  const renderScatterChart = (height) => (
-    <ResponsiveContainer width="100%" height={height}>
-      <ScatterChart margin={{ top: 6, right: 12, bottom: 6, left: 0 }}>
-        <CartesianGrid stroke={T.border} strokeDasharray="3 3" />
-        {/* Quadrant tints - reuse each segment's existing badge
-            background color, so this stays in sync with SEGMENT_BG
-            instead of being a second, hand-maintained color list. */}
-        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["Healthy"]} fillOpacity={1} stroke="none" label={{ value: "Q4: Low risk, High value", position: "insideTopLeft", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
-        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={medianContractValue} y2={scatterYMax} fill={SEGMENT_BG["High Risk"]} fillOpacity={1} stroke="none" label={{ value: "Q1: High risk, High value", position: "insideTopRight", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
-        <ReferenceArea x1={RISK_QUADRANT_THRESHOLD} x2={100} y1={0} y2={medianContractValue} fill={SEGMENT_BG["At Risk"]} fillOpacity={1} stroke="none" label={{ value: "Q2: High risk, Low value", position: "insideBottomRight", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
-        <ReferenceArea x1={0} x2={RISK_QUADRANT_THRESHOLD} y1={0} y2={medianContractValue} fill={SEGMENT_BG["Standard"]} fillOpacity={1} stroke="none" label={{ value: "Q3: Low risk, Low value", position: "insideBottomLeft", fill: T.inkMuted, fontSize: 12, fontWeight: 700 }} />
-        <XAxis type="number" dataKey="x" name="Risk score" domain={[0, 100]} stroke={T.inkFaint} tick={{ fontSize: 11 }} />
-        <YAxis type="number" dataKey="y" name="Contract value ($)" domain={[0, scatterYMax]} stroke={T.inkFaint} tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
-        <ZAxis range={[55, 55]} />
-        <ReferenceLine x={RISK_QUADRANT_THRESHOLD} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Risk " + RISK_QUADRANT_THRESHOLD, position: "insideTopLeft", fill: T.inkFaint, fontSize: 10 }} />
-        <ReferenceLine y={medianContractValue} stroke={T.borderStrong} strokeDasharray="4 4" label={{ value: "Median value ($)", position: "insideBottomRight", fill: T.inkFaint, fontSize: 10 }} />
-        <Tooltip
-          cursor={{ strokeDasharray: "3 3" }}
-          content={({ active, payload }) => {
-            if (!active || !payload?.length) return null;
-            const d = payload[0].payload; // the original scatterData point: { x, y, tier, id, name }
-            return (
-              <div style={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, padding: "8px 10px" }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>{d.name}</div>
-                <div style={{ color: T.inkMuted }}>{d.id}</div>
-                <div style={{ marginTop: 4 }}>Risk score: {d.x}</div>
-                <div style={{ marginTop: 4 }}>Tier: {d.tier}</div>
-                <div>Contract value ($): ${d.y.toLocaleString()}</div>
-              </div>
-            );
-          }}
-        />
-        {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
-          <Scatter
-            key={seg}
-            name={seg}
-            data={scatterData.filter((d) => d.tier === seg)}
-            fill={SEGMENT_COLOR[seg]}
-            onClick={(d) => { setSelected(d.id); setMaximizedChart(null); }}
-            cursor="pointer"
-          />
-        ))}
-      </ScatterChart>
-    </ResponsiveContainer>
-  );
-
-  // Same helper the Dashboard tab uses for Total value / At risk $ / Converted
-  // $ - one definition of these metrics, not a second copy for this tab.
-  const plannerBookMetrics = useMemo(
-    () => aggregateBookMetrics(filteredContracts, traceByContract),
-    [filteredContracts, traceByContract]
-  );
-
-  // "Action required" is the default actionStatus every trace record gets
-  // and flips to "Action done" once a rep marks it complete - scoped to
-  // filteredContracts so this stays in sync with the region/channel/bucket
-  // filters instead of reading the backend's unfiltered global total.
-  const actionsNeeded = useMemo(
-    () => filteredContracts.filter((c) => traceByContract[c.contractId]?.actionStatus === "Action required").length,
-    [filteredContracts, traceByContract]
-  );
-
-  const selectedContract = contracts.find((c) => c.contractId === selected);
-  const portfolioContracts = selectedContract
-    ? contracts.filter((c) => c.customerId === selectedContract.customerId).sort((a, b) => b.riskScore - a.riskScore)
-    : [];
+  const selectedContract = detail?.contract;
+  const portfolioContracts = detail?.portfolio ?? [];
   const portfolioSort = useSort(null, "asc");
   const [portfolioSortKey, portfolioSortDir] = portfolioSort;
   const sortedPortfolioContracts = useMemo(() => sortRows(portfolioContracts, portfolioSortKey, portfolioSortDir, {
@@ -1348,32 +1279,7 @@ function ContractRenewalPOC({ user, onLogout }) {
     contractValue: (c) => c.contractValue,
     riskScore: (c) => c.riskScore,
   }), [portfolioContracts, portfolioSortKey, portfolioSortDir]);
-  const selectedTrace = selected ? traceByContract[selected] : null;
-
-  const setOutcome = async (contractId, outcome, note) => {
-    // Optimistic local update so the UI feels immediate...
-    setTrace((prev) => prev.map((r) => (r.contractId === contractId && r === traceByContract[contractId]
-      ? { ...r, outcome, outcomeNote: note ?? r.outcomeNote } : r)));
-    // ...then persist to the backend, which is the source of truth.
-    try {
-      await api.sendFeedback(contractId, outcome, note);
-      const [t, m] = await Promise.all([api.getTrace(), api.getMetrics()]);
-      setTrace(t); setMetrics(m);
-    } catch (e) {
-      setApiError(String(e.message || e));
-    }
-  };
-
-  const toggleActionStatus = async (contractId, current) => {
-    const next = current === "Action done" ? "Action required" : "Action done";
-    setTrace((prev) => prev.map((r) => (r.contractId === contractId && r === traceByContract[contractId]
-      ? { ...r, actionStatus: next } : r)));
-    try {
-      await api.setActionStatus(contractId, next);
-    } catch (e) {
-      setApiError(String(e.message || e));
-    }
-  };
+  const selectedTrace = detail?.trace ?? null;
 
   if (!loaded) {
     return (
@@ -1430,21 +1336,6 @@ function ContractRenewalPOC({ user, onLogout }) {
               Sign out
             </button>
           </div>
-          {/* The batch runs the LLM pipeline across every area, so it is admin-only until it moves to its own daily pipeline. */}
-          {user.role === "admin" && (
-          <button
-            onClick={runBatch}
-            disabled={running || dueContracts.length === 0}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, background: running ? T.inkFaint : T.brand, color: "#fff",
-              border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600,
-              cursor: running || dueContracts.length === 0 ? "default" : "pointer", marginLeft: "auto",
-            }}
-          >
-            <Play size={15} fill="#fff" />
-            {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
-          </button>
-          )}
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
         </div>
           
@@ -1459,7 +1350,6 @@ function ContractRenewalPOC({ user, onLogout }) {
         {user.role === "admin" && (
           <button className={`tabbtn ${tab === "access" ? "active" : ""}`} onClick={() => setTab("access")}>Access</button>
         )}
-        {/* <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button> */}
       </div>
 
       {tab === "access" && user.role === "admin" && <AccessPage currentUserId={user.id} />}
@@ -1570,187 +1460,79 @@ function ContractRenewalPOC({ user, onLogout }) {
 
       {tab === "renewal-prioritization" && (
         <>
-          {/* Global filters */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>Filters</span>
-            <MultiSelect
-              label="regions"
-              options={[{ value: "NATT", label: "NATT" }, { value: "ETT", label: "ETT" }, { value: "APAC_TT", label: "APAC-TT" }]}
-              selected={regionFilter}
-              onChange={setRegionFilter}
-            />
-            <MultiSelect
-              label="channels"
-              options={[{ value: "Dealer", label: "Dealer" }, { value: "Direct", label: "Direct" }]}
-              selected={channelFilter}
-              onChange={setChannelFilter}
-            />
-            {(regionFilter.length > 0 || channelFilter.length > 0) && (
-              <span style={{ fontSize: 11.5, color: T.inkFaint }}>{filteredContracts.length} of {contracts.length} contracts shown</span>
-            )}
-          </div>
-    
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Contract expiring in: </div>
-          <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Click a milestone to filter the worklist, chart, and KPIs below by how soon each contract is due for renewal.</div>
+          <FilterBar filters={filters} onChange={setFilters} areaOptions={areaOptions} />
 
-          {/* Bucket cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 18 }}>
-            {BUCKETS.map((b) => (
-              <Card
-                key={b}
-                onClick={() => setBucketFilter(bucketFilter === b ? null : b)}
-                title={BUCKET_TOOLTIP[b]}
-                style={{
-                  padding: "12px 14px",
-                  borderColor: bucketFilter === b ? T.ink : T.border,
-                  borderWidth: bucketFilter === b ? 1.5 : 1,
-                }}
-              >
-                <div style={{ fontSize: 11, color: T.inkFaint, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>{BUCKET_LABEL[b]}</div>
-                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2, color: b === "Lost" ? T.risk : T.ink }}>{bucketCounts[b]}</div>
-              </Card>
-            ))}
-          </div>
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Contract expiring in: </div>
+          <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Click a milestone to filter the worklist, charts, and KPIs below by how soon each contract is due for renewal.</div>
+          <BucketCards counts={summary?.buckets} value={filters.bucket} onPick={(b) => setFilters((f) => ({ ...f, bucket: f.bucket === b ? null : b }))} />
 
           <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 16, marginBottom: 18 }}>
-            {/* Scatter */}
+            {/* Risk x value heatmap */}
             <Card style={{ padding: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                 <div>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Value Segmentation</div>
-                  <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Risk Score vs. Contract Value ($) - quadrants split at risk {RISK_QUADRANT_THRESHOLD} and median contract value ($)</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Risk × Value</div>
+                  <div style={{ fontSize: 12, color: T.inkMuted, marginBottom: 10 }}>Contracts by risk score and by value against their own area's median. Click a cell to filter.</div>
                 </div>
-                <button
-                  onClick={() => setMaximizedChart("scatter")}
-                  title="Maximize"
-                  style={{ border: "none", background: "none", cursor: "pointer", padding: 4, color: T.inkFaint, flexShrink: 0 }}
-                >
-                  <Maximize2 size={15} />
-                </button>
+                <div style={{ display: "flex", flexShrink: 0 }}>
+                  {[["contracts", "Contracts"], ["value", "$"]].map(([m, lab]) => (
+                    <button key={m} onClick={() => setHeatMode(m)} style={{
+                      border: `1px solid ${T.border}`, padding: "4px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer",
+                      background: heatMode === m ? T.ink : T.surface, color: heatMode === m ? "#fff" : T.inkMuted,
+                      borderRadius: m === "contracts" ? "6px 0 0 6px" : "0 6px 6px 0",
+                    }}>{lab}</button>
+                  ))}
+                </div>
               </div>
-              {renderScatterChart(280)}
-              <div style={{ display: "flex", gap: 14, marginTop: 4, flexWrap: "wrap" }}>
-                {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
-                  <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.inkMuted }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 99, background: SEGMENT_COLOR[seg], display: "inline-block" }} />
-                    {seg}
-                  </div>
-                ))}
-              </div>
+              <RiskValueHeatmap cells={summary?.heat} rb={filters.rb} vb={filters.vb} onPick={onPickCell} mode={heatMode} />
+              <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 6 }}>Risk score →  (heavy lines: segment cut-offs at 30, 50, 70)</div>
             </Card>
 
             {/* KPI summary */}
             <Card style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700 }}>Portfolio KPIs</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <StatBlock label="Customers | Contracts" value={plannerBookMetrics.customerCount + " | " + plannerBookMetrics.contractCount} />
-                <StatBlock label="Actions needed" value={actionsNeeded} sub={`of ${plannerBookMetrics.contractCount} contracts`} accent={actionsNeeded > 0 ? T.brand : undefined} />
-                <StatBlock label="High risk contracts" value={filteredContracts.filter((c) => c.segment === "High Risk").length} sub="High Risk segment" accent={T.risk} />
-                <StatBlock label="At-risk contracts" value={filteredContracts.filter((c) => c.segment === "At Risk").length} sub="At Risk segment" accent={T.amber} />
-                <StatBlock label="Lost" value={plannerBookMetrics.lostCount} sub="declined our outreach" accent={T.risk} />
-                <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
-                <StatBlock label="Total contract value" value={`$${(plannerBookMetrics.totalValue / 1000000).toFixed(2)}M`} sub="Active contracts" />
-                <StatBlock label="Converted $" value={`$${(plannerBookMetrics.potentialRevenueValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
-                <StatBlock label="Potential $ at risk" value={`$${(plannerBookMetrics.potentialAtRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
-                <StatBlock label="Lost revenue $" value={`$${(plannerBookMetrics.lostRevenueValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
+                <StatBlock label="Customers | Contracts" value={`${k.customers.toLocaleString()} | ${k.contracts.toLocaleString()}`} />
+                <StatBlock label="Actions needed" value={k.actionsNeeded.toLocaleString()} sub={`of ${k.contracts.toLocaleString()} contracts`} accent={k.actionsNeeded > 0 ? T.brand : undefined} />
+                <StatBlock label="High risk contracts" value={k.segments["High Risk"].toLocaleString()} sub="High Risk segment" accent={T.risk} />
+                <StatBlock label="At-risk contracts" value={k.segments["At Risk"].toLocaleString()} sub="At Risk segment" accent={T.amber} />
+                <StatBlock label="Lost" value={k.lostCount.toLocaleString()} sub="declined our outreach" accent={T.risk} />
+                <StatBlock label="Campaign response rate" value={k.responseRate !== null ? `${k.responseRate}%` : "-"} sub="of logged outcomes" />
+                <StatBlock label="Total contract value" value={`$${(k.value / 1000000).toFixed(2)}M`} sub="Active contracts" />
+                <StatBlock label="Converted $" value={`$${(k.convertedValue / 1000000).toFixed(2)}M`} sub="engaged" accent={T.safe} />
+                <StatBlock label="Potential $ at risk" value={`$${(k.atRiskValue / 1000000).toFixed(2)}M`} sub="no response received" accent={T.amber} />
+                <StatBlock label="Lost revenue $" value={`$${(k.lostValue / 1000000).toFixed(2)}M`} sub="declined" accent={T.risk} />
               </div>
             </Card>
 
             <Card style={{ padding: 16 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 2 }}>Campaign Response by Risk Bucket</div>
               <div style={{ fontSize: 11, color: T.inkFaint, marginBottom: 10, lineHeight: 1.4 }}>
-                Live signal from logged outcomes, reflecting the region/channel filters above.
+                Live signal from logged outcomes, reflecting the filters above.
               </div>
-              {filteredOutcomeByRiskBucket.totalWithOutcome > 0 ? (
-                <OutcomeBucketChart data={filteredOutcomeByRiskBucket} />
+              {summary?.outcomeByRisk?.totalWithOutcome > 0 ? (
+                <OutcomeBucketChart data={summary.outcomeByRisk} />
               ) : (
                 <div style={{ fontSize: 12, color: T.inkFaint, padding: "18px 0", textAlign: "center" }}>
-                  Not enough logged outcomes yet for this filter - log a few via Feedback Logging, or clear the filters.
+                  Not enough logged outcomes yet for this filter - log a few from a contract's drawer, or clear the filters.
                 </div>
               )}
             </Card>
           </div>
 
-          {/* Worklist */}
-          <Card style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Worklist {bucketFilter ? `- ${BUCKET_LABEL[bucketFilter]}` : ""}</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: T.inkFaint }} />
-                  <input
-                    type="text"
-                    value={worklistSearch}
-                    onChange={(e) => setWorklistSearch(e.target.value)}
-                    placeholder="Search customer, contract ID, region…"
-                    style={{
-                      border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 10px 6px 28px",
-                      fontSize: 12.5, fontFamily: "inherit", width: 220, color: T.ink,
-                    }}
-                  />
-                  {worklistSearch && (
-                    <button
-                      onClick={() => setWorklistSearch("")}
-                      style={{ position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", padding: 2, color: T.inkFaint, display: "flex" }}
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-                {bucketFilter && <button onClick={() => setBucketFilter(null)} style={{ border: "none", background: "none", fontSize: 12, color: T.info, cursor: "pointer", whiteSpace: "nowrap" }}>Clear filter</button>}
-              </div>
-            </div>
-            <div style={{ maxHeight: 360, overflowY: "auto" }}>
-              <table>
-                <thead><tr>
-                  <SortTh label="Customer" sortKey="customerName" sort={worklistSort} />
-                  <SortTh label="Region" sortKey="region" sort={worklistSort} />
-                  <SortTh label="Channel" sortKey="channel" sort={worklistSort} />
-                  <SortTh label="Bucket" sortKey="bucket" sort={worklistSort} />
-                  <SortTh label="Risk" sortKey="riskScore" sort={worklistSort} />
-                  <SortTh label="Value" sortKey="contractValue" sort={worklistSort} />
-                  <SortTh label="Recommendation" sortKey="recommendation" sort={worklistSort} />
-                  <SortTh label="Status" sortKey="status" sort={worklistSort} />
-                  <th></th>
-                </tr></thead>
-                <tbody>
-                  {sortedWorklist.length === 0 && (
-                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 24, color: T.inkFaint, fontSize: 12.5 }}>No contracts match "{worklistSearch}".</td></tr>
-                  )}
-                  {sortedWorklist.map((c) => {
-                    const t = traceByContract[c.contractId];
-                    return (
-                      <tr key={c.contractId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(c.contractId)}>
-                        <td style={{ fontWeight: 600 }}>{c.customerName}</td>
-                        <td>{c.region}</td>
-                        <td>{c.channel}</td>
-                        <td><Badge text={BUCKET_LABEL[c.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
-                        <td><Badge text={`${c.segment} · ${c.riskScore}`} color={SEGMENT_COLOR[c.segment]} bg={SEGMENT_BG[c.segment]} /></td>
-                        <td>${c.contractValue.toLocaleString()}</td>
-                        <td style={{ color: t?.recommendation?.campaign ? T.ink : T.inkFaint }}>
-                          <Badge text={t?.recommendation?.campaign || "-"} bg={T.purpleBg} />
-                        </td>
-                        <td>
-                          {!t && <span style={{ color: T.inkFaint, fontSize: 12 }}>Not run</span>}
-                          {t && t.error && <span title={t.errorMessage}><Badge text="Error" color={T.risk} bg={T.riskBg} /></span>}
-                          {t && !t.error && t.pass && !t.escalated && <Badge text="Recommended" color={T.safe} bg={T.safeBg} />}
-                          {t && !t.error && t.escalated && (
-                            <span style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                              <Badge text="Escalated" color={T.risk} bg={T.riskBg} />
-                              {t.actionStatus === "Action required"
-                                ? <Badge text="Action required" color={T.amber} bg={T.amberBg} />
-                                : <Badge text="Done" color={T.safe} bg={T.safeBg} />}
-                            </span>
-                          )}
-                        </td>
-                        <td><ChevronRight size={15} color={T.inkFaint} /></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          <Worklist
+            params={{ ...filters, q, sort: view.sort.key, dir: view.sort.dir }}
+            view={view}
+            extraKey={view.columns.join(",")}
+            total={q ? null : k.contracts}
+            search={search}
+            onSearch={setSearch}
+            onSort={onSort}
+            onColumns={onColumns}
+            onOpen={setSelected}
+            overrides={overrides}
+            areaLabel={areaLabel}
+          />
 
           {/* Model info */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
@@ -1772,121 +1554,24 @@ function ContractRenewalPOC({ user, onLogout }) {
         </>
       )}
 
-      {tab === "trace" && (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
-            <Card><StatBlock label="First-pass rate" value={`${metrics.firstPassRate}%`} sub="passed with 0 retries" /></Card>
-            <Card><StatBlock label="Avg. retries" value={metrics.avgRetries} sub={`limit ${MAX_RETRIES}`} /></Card>
-            <Card><StatBlock label="Escalation rate" value={`${metrics.escalationRate}%`} sub="sent to human review" accent={metrics.escalationRate > 0 ? T.risk : T.ink} /></Card>
-            <Card><StatBlock label="Avg. latency" value={`${metrics.avgLatency}ms`} sub="per contract-milestone" /></Card>
-            <Card><StatBlock label="Est. token cost" value={`$${metrics.totalCost.toFixed(3)}`} sub="cumulative, this session" /></Card>
-          </div>
-
-          <Card style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`, fontSize: 13.5, fontWeight: 700 }}>
-              Recommendation trace log ({trace.length} runs)
-            </div>
-            <div style={{ maxHeight: 420, overflowY: "auto" }}>
-              <table>
-                <thead><tr>
-                  <SortTh label="Customer" sortKey="customer" sort={traceSort} />
-                  <SortTh label="Milestone" sortKey="milestone" sort={traceSort} />
-                  <SortTh label="Campaign" sortKey="campaign" sort={traceSort} />
-                  <SortTh label="Retries" sortKey="retryCount" sort={traceSort} />
-                  <SortTh label="Result" sortKey="result" sort={traceSort} />
-                  <SortTh label="Latency" sortKey="latencyMs" sort={traceSort} />
-                  <SortTh label="Cost" sortKey="costUsd" sort={traceSort} />
-                </tr></thead>
-                <tbody>
-                  {sortedTraceRows.map((r, i) => (
-                    <tr key={r.runId} className="rowhover" style={{ cursor: "pointer" }} onClick={() => setSelected(r.contractId)}>
-                      <td style={{ fontWeight: 600 }}>{contracts.find((c) => c.contractId === r.contractId)?.customerName}</td>
-                      <td>{BUCKET_LABEL[r.milestone]}</td>
-                      <td style={{ color: T.inkMuted }}>{r.recommendation?.campaign || "-"}</td>
-                      <td>{r.retryCount}</td>
-                      <td>
-                        {r.error
-                          ? <span title={r.errorMessage}><Badge text="Error" color={T.risk} bg={T.riskBg} /></span>
-                          : r.escalated
-                            ? <Badge text="Escalated" color={T.risk} bg={T.riskBg} />
-                            : r.pass
-                              ? <Badge text="Passed" color={T.safe} bg={T.safeBg} />
-                              : <Badge text="Failed" color={T.risk} bg={T.riskBg} />}
-                      </td>
-                      <td style={{ color: T.inkMuted }}>{r.latencyMs}ms</td>
-                      <td style={{ color: T.inkMuted }}>${r.costUsd.toFixed(4)}</td>
-                    </tr>
-                  ))}
-                  {trace.length === 0 && (
-                    <tr><td colSpan={7} style={{ textAlign: "center", color: T.inkFaint, padding: 24 }}>No runs yet - run the daily batch from the `Renewal Prioritization` tab.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </>
-      )}
 
       {tab === "dashboard" && (
         <>
-          {/* Drill-down filters - same chip pattern as Renewal Prioritization, plus
-              a Segment filter. No filter selected = Global; adding region/
-              channel/segment/bucket chips narrows down to Regional / Segment /
-              Milestone level, all using the same underlying data. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>Filters</span>
-            <MultiSelect
-              label="regions"
-              options={REGIONS.map((r) => ({ value: r.id, label: r.id === "APAC_TT" ? "APAC-TT" : r.id }))}
-              selected={dashRegionFilter}
-              onChange={setDashRegionFilter}
-            />
-            <MultiSelect
-              label="channels"
-              options={[{ value: "Dealer", label: "Dealer" }, { value: "Direct", label: "Direct" }]}
-              selected={dashChannelFilter}
-              onChange={setDashChannelFilter}
-            />
-            <MultiSelect
-              label="segments"
-              options={[{ value: "High Risk", label: "High Risk" }, { value: "At Risk", label: "At Risk" }, { value: "Healthy", label: "Healthy" }, { value: "Standard", label: "Standard" }]}
-              selected={dashSegmentFilter}
-              onChange={setDashSegmentFilter}
-            />
-            {(dashRegionFilter.length > 0 || dashChannelFilter.length > 0 || dashSegmentFilter.length > 0 || dashBucketFilter) && (
-              <span style={{ fontSize: 11.5, color: T.inkFaint }}>{dashFilteredContracts.length} of {contracts.length} contracts shown</span>
-            )}
-          </div>
+          <FilterBar filters={filters} onChange={setFilters} areaOptions={areaOptions} />
 
-          {/* Milestone drill-down - same cards as Renewal Prioritization, own state */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 10, marginBottom: 20 }}>
-            {BUCKETS.map((b) => (
-              <Card
-                key={b}
-                onClick={() => setDashBucketFilter(dashBucketFilter === b ? null : b)}
-                title={BUCKET_TOOLTIP[b]}
-                style={{
-                  padding: "12px 14px",
-                  borderColor: dashBucketFilter === b ? T.ink : T.border,
-                  borderWidth: dashBucketFilter === b ? 1.5 : 1,
-                }}
-              >
-                <div style={{ fontSize: 11, color: T.inkFaint, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>{BUCKET_LABEL[b]}</div>
-                <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2, color: b === "Lost" ? T.risk : T.ink }}>{dashBucketCounts[b]}</div>
-              </Card>
-            ))}
-          </div>
+          {/* Milestone drill-down - the same cards and the same filter as Renewal Prioritization */}
+          <BucketCards counts={summary?.buckets} value={filters.bucket} onPick={(b) => setFilters((f) => ({ ...f, bucket: f.bucket === b ? null : b }))} />
 
-          {/* Book overview: Global, then per-region */}
+          {/* Book overview: Global, then per area */}
           <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Book overview</div>
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.inkFaint, marginBottom: 12 }}>
-              Global{dashBucketFilter ? ` - ${BUCKET_LABEL[dashBucketFilter]}` : ""}
+              Global{filters.bucket ? ` - ${BUCKET_LABEL[filters.bucket]}` : ""}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
               <StatBlock label="Customers" value={dashGlobalMetrics.customerCount} />
               <StatBlock label="Contracts" value={dashGlobalMetrics.contractCount} />
-              <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
+              <StatBlock label="Campaign response rate" value={k.responseRate !== null ? `${k.responseRate}%` : "-"} sub="of logged outcomes" />
               <StatBlock label="" value="" />
               <StatBlock label="" value="" />
               <StatBlock label="Healthy contracts" value={dashGlobalMetrics.segmentCounts["Healthy"]} sub="High Risk segment" accent={T.safe} />
@@ -1904,20 +1589,25 @@ function ContractRenewalPOC({ user, onLogout }) {
           </Card>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
-            {dashRegionsToShow.map((region) => {
-              const m = aggregateBookMetrics(dashFilteredContracts.filter((c) => c.region === region.id), traceByContract);
+            {(summary?.byCtx ?? []).map((c) => {
+              const logged = c.engaged + c.declined + c.noResponse;
+              const m = {
+                customerCount: c.customers, contractCount: c.contracts, segmentCounts: c.segments, totalValue: c.value,
+                potentialRevenueValue: c.convertedValue, potentialAtRiskValue: c.atRiskValue, lostRevenueValue: c.lostValue,
+                responseRate: logged ? Math.round((c.engaged / logged) * 100) : null,
+              };
               return (
-                <Card key={region.id} style={{ padding: 16 }}>
+                <Card key={c.ctx ?? "none"} style={{ padding: 16 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                     <div>
-                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>{region.label}</div>
-                      <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{region.id} · {region.channels.join(" + ")} channel{region.channels.length > 1 ? "s" : ""}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>{areaLabel(c.ctx)}</div>
+                      <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 2 }}>{c.ctx ? `Area ${c.ctx}` : "Contracts without an area · admins only"}</div>
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
                     <StatBlock label="Customers" value={m.customerCount} />
                     <StatBlock label="Contracts" value={m.contractCount} />
-                    <StatBlock label="Campaign response rate" value={metrics.responseRate !== null ? `${metrics.responseRate}%` : "-"} sub="of logged outcomes" />
+                    <StatBlock label="Campaign response rate" value={m.responseRate !== null ? `${m.responseRate}%` : "-"} sub="of logged outcomes" />
                     <StatBlock label="" value="" />
 
                     <StatBlock label="Healthy contracts" value={m.segmentCounts["Healthy"]} sub="High Risk segment" accent={T.safe} />
@@ -1935,12 +1625,11 @@ function ContractRenewalPOC({ user, onLogout }) {
             })}
           </div>
 
-          {/* Campaign performance - same filters as above, applied to trace
-              records via their own snapshotted context. */}
+          {/* Campaign performance - the same filters as above, applied to the recommendations. */}
           <div style={{ fontSize: 12, fontWeight: 700, color: T.brand, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Campaign performance</div>
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 16 }}>
-              <StatBlock label="Contracts in filter" value={dashFilteredContracts.length} />
+              <StatBlock label="Contracts in filter" value={k.contracts.toLocaleString()} />
               <StatBlock label="Assigned" value={dashCampaignTotals.assigned} sub="recommended action" />
               <StatBlock label="Engaged" value={dashCampaignTotals.engaged} sub="made response" accent={T.safe} />
               <StatBlock label="Declined" value={dashCampaignTotals.declined} accent={T.risk} />
@@ -1995,7 +1684,8 @@ function ContractRenewalPOC({ user, onLogout }) {
         </>
       )}
 
-      {/* Chart maximize modal - shared by the scatter and campaign bar charts.
+
+      {/* Chart maximize modal - the campaign bar chart.
           Click the backdrop or the minimize button to close; z-index sits
           below the detail drawer so selecting a contract from the maximized
           scatter chart surfaces the drawer on top instead of behind it. */}
@@ -2010,7 +1700,7 @@ function ContractRenewalPOC({ user, onLogout }) {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>
-                {maximizedChart === "scatter" ? "Value Segmentation" : "Campaign performance"}
+                Campaign performance
               </div>
               <button
                 onClick={() => setMaximizedChart(null)}
@@ -2020,20 +1710,18 @@ function ContractRenewalPOC({ user, onLogout }) {
                 <Minimize2 size={18} />
               </button>
             </div>
-            {maximizedChart === "scatter" && (
-              <>
-                {renderScatterChart(560)}
-                <div style={{ display: "flex", gap: 14, marginTop: 8, flexWrap: "wrap" }}>
-                  {["High Risk", "At Risk", "Healthy", "Standard"].map((seg) => (
-                    <div key={seg} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.inkMuted }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 99, background: SEGMENT_COLOR[seg], display: "inline-block" }} />
-                      {seg}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
             {maximizedChart === "campaign-bar" && renderCampaignBarChart(520)}
+          </div>
+        </div>
+      )}
+
+      {selected && !selectedContract && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(22,27,34,0.35)", display: "flex", justifyContent: "flex-end", zIndex: 50 }} onClick={() => setSelected(null)}>
+          <div style={{ width: "56%", minWidth: 460, maxWidth: "94vw", background: T.surface, height: "100%", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ fontSize: 13, color: detailError ? T.risk : T.inkFaint }}>{detailError || `Loading contract ${selected}…`}</div>
+              <button onClick={() => setSelected(null)} style={{ border: "none", background: "none", cursor: "pointer" }}><X size={18} color={T.inkFaint} /></button>
+            </div>
           </div>
         </div>
       )}
@@ -2044,7 +1732,7 @@ function ContractRenewalPOC({ user, onLogout }) {
           <div style={{ width: "56%", minWidth: 460, maxWidth: "94vw", background: T.surface, height: "100%", overflowY: "auto", padding: 22, boxShadow: "-8px 0 24px rgba(0,0,0,0.12)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
               <div>
-                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} · {selectedContract.region}</div>
+                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600 }}>{selectedContract.contractId} · {areaLabel(selectedContract.ctx)}</div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{selectedContract.customerName}</div>
               </div>
               <button onClick={() => setSelected(null)} style={{ border: "none", background: "none", cursor: "pointer" }}><X size={18} color={T.inkFaint} /></button>
@@ -2052,7 +1740,7 @@ function ContractRenewalPOC({ user, onLogout }) {
 
             <div style={{ display: "flex", gap: 8, margin: "10px 0 16px", flexWrap: "wrap" }}>
               {[...new Set(portfolioContracts.map((pc) => pc.region))].map((r) => (
-                <Badge key={r} text={r === "APAC_TT" ? "APAC-TT" : r} color={T.purple} bg={T.purpleBg} />
+                <Badge key={r} text={areaLabel(r === "—" ? null : r)} color={T.purple} bg={T.purpleBg} />
               ))}
               <Badge text={selectedContract.channel} color={T.info} bg={T.infoBg} />
               <Badge text={BUCKET_LABEL[selectedContract.bucket]} color={T.inkMuted} bg={T.surfaceSunken} />
@@ -2082,7 +1770,7 @@ function ContractRenewalPOC({ user, onLogout }) {
                   <table>
                     <thead><tr>
                       <SortTh label="Contract" sortKey="contractId" sort={portfolioSort} />
-                      <SortTh label="Region" sortKey="region" sort={portfolioSort} />
+                      <SortTh label="Area" sortKey="region" sort={portfolioSort} />
                       <SortTh label="Bucket" sortKey="bucket" sort={portfolioSort} />
                       <SortTh label="Value" sortKey="contractValue" sort={portfolioSort} />
                       <SortTh label="Risk" sortKey="riskScore" sort={portfolioSort} />
@@ -2096,7 +1784,7 @@ function ContractRenewalPOC({ user, onLogout }) {
                           onClick={() => setSelected(pc.contractId)}
                         >
                           <td style={{ fontWeight: pc.contractId === selectedContract.contractId ? 700 : 500 }}>{pc.contractId}</td>
-                          <td><Badge text={pc.region === "APAC_TT" ? "APAC-TT" : pc.region} color={T.purple} bg={T.purpleBg} /></td>
+                          <td><Badge text={areaLabel(pc.region === "—" ? null : pc.region)} color={T.purple} bg={T.purpleBg} /></td>
                           <td><Badge text={BUCKET_LABEL[pc.bucket]} color={T.inkMuted} bg={T.surfaceSunken} /></td>
                           <td>${pc.contractValue.toLocaleString()}</td>
                           <td><Badge text={pc.segment} color={SEGMENT_COLOR[pc.segment]} bg={SEGMENT_BG[pc.segment]} /></td>
@@ -2115,19 +1803,23 @@ function ContractRenewalPOC({ user, onLogout }) {
               <StatBlock label="Price increase" value={selectedContract.priceIncreasePct != null ? `${(selectedContract.priceIncreasePct * 100).toFixed(1)}%` : "—"} sub={selectedContract.priceIncreasePct == null ? "no billing history on record" : undefined} />
             </div>
 
-            {/* Globally available regardless of which drawer tab is active */}
+            {/* The three summaries come from the daily batch; the drawer only shows them. */}
+            <CachedAgentCard
+              title="Contract Summary (AI Generated)"
+              record={detail.summaries.contract}
+              placeholderLabel="No summary has been generated for this contract yet - they are produced by the daily batch."
+            />
             <CachedAgentCard
               title="Customer Summary (AI Generated)"
-              record={customerSummaries[summaryKey(selectedContract.customerId, selectedContract.ctx)]}
-              onGenerate={() => runCustomerSummary(selectedContract.customerId, selectedContract.ctx)}
-              loadingLabel="Reading full customer relationship"
-              placeholderLabel="Synthesizes this customer's entire portfolio (all contracts) into one relationship summary. Generated automatically during the next batch run if you skip this."
+              record={detail.summaries.account}
+              placeholderLabel="No customer summary has been generated yet - they are produced by the daily batch."
             />
 
             <div style={{ display: "flex", gap: 18, borderBottom: `1px solid ${T.border}`, marginBottom: 16 }}>
               <button className={`tabbtn ${drawerTab === "action" ? "active" : ""}`} onClick={() => setDrawerTab("action")}>Recommended Action</button>
               <button className={`tabbtn ${drawerTab === "portfolio" ? "active" : ""}`} onClick={() => setDrawerTab("portfolio")}>Customer Portfolio</button>
               <button className={`tabbtn ${drawerTab === "service" ? "active" : ""}`} onClick={() => setDrawerTab("service")}>Service History</button>
+              <button className={`tabbtn ${drawerTab === "details" ? "active" : ""}`} onClick={() => setDrawerTab("details")}>Details</button>
               <button className={`tabbtn ${drawerTab === "evaluation" ? "active" : ""}`} onClick={() => setDrawerTab("evaluation")}>AI Evaluation</button>
             </div>
 
@@ -2183,7 +1875,7 @@ function ContractRenewalPOC({ user, onLogout }) {
                       <textarea
                         placeholder="Optional rep note…"
                         value={selectedTrace.outcomeNote}
-                        onChange={(e) => setOutcome(selectedContract.contractId, selectedTrace.outcome, e.target.value)}
+                        onChange={(e) => setNote(selectedContract.contractId, e.target.value)}
                         style={{ width: "100%", minHeight: 60, border: `1px solid ${T.border}`, borderRadius: 7, padding: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }}
                       />
                     </Card>
@@ -2206,12 +1898,38 @@ function ContractRenewalPOC({ user, onLogout }) {
               <>
                 <CachedAgentCard
                   title="Service Ticket Summary (AI Generated)"
-                  record={ticketSummaries[selectedContract.contractId]}
-                  onGenerate={() => runTicketSummary(selectedContract.contractId)}
-                  loadingLabel="Reading service ticket history"
-                  placeholderLabel="Synthesizes all service tickets for this contract into one summary, fed into the recommendation agent. Generated automatically during the next batch run if you skip this."
+                  record={detail.summaries.webClaims}
+                  placeholderLabel="No service summary has been generated for this contract yet - they are produced by the daily batch."
                 />
                 <ServiceTicketHistory equipment={selectedContract.equipment} claims={selectedContract.claims} />
+              </>
+            )}
+
+            {drawerTab === "details" && (
+              <>
+                <div style={sectionLabel}>Contact</div>
+                <Card style={{ padding: 14, marginBottom: 14 }}>
+                  {contact === null && (
+                    <>
+                      <div style={{ fontSize: 12.5, color: T.inkFaint, marginBottom: 10 }}>Contact details are only shown on request, and every request is recorded in the audit trail.</div>
+                      <button onClick={() => revealContact(selectedContract.contractId)} style={{ border: "none", background: T.ink, color: "#fff", borderRadius: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Show contact details</button>
+                    </>
+                  )}
+                  {contact === "loading" && <div style={{ fontSize: 12.5, color: T.inkFaint }}>Loading…</div>}
+                  {Array.isArray(contact) && (contact.length === 0
+                    ? <div style={{ fontSize: 12.5, color: T.inkFaint }}>No contact details on record.</div>
+                    : <table><tbody>{contact.map((i) => <tr key={i.key}><td style={{ color: T.inkMuted, width: 170 }}>{i.label}</td><td>{fmtDetail(i.value)}</td></tr>)}</tbody></table>)}
+                </Card>
+                {detail.details.map((g) => (
+                  <React.Fragment key={g.group}>
+                    <div style={sectionLabel}>{g.group}</div>
+                    <Card style={{ padding: 0, overflow: "hidden", marginBottom: 14 }}>
+                      <table><tbody>
+                        {g.items.map((i) => <tr key={i.key}><td style={{ color: T.inkMuted, width: 220 }}>{i.label}</td><td>{fmtDetail(i.value)}</td></tr>)}
+                      </tbody></table>
+                    </Card>
+                  </React.Fragment>
+                ))}
               </>
             )}
 
@@ -2219,7 +1937,7 @@ function ContractRenewalPOC({ user, onLogout }) {
               <>
                 {!selectedTrace && (
                   <div style={{ fontSize: 13, color: T.inkFaint, padding: 14, background: T.surfaceSunken, borderRadius: 8 }}>
-                    No evaluation available yet - run a recommendation first.
+                    No evaluation available yet - the daily batch has not produced a recommendation for this contract.
                   </div>
                 )}
 

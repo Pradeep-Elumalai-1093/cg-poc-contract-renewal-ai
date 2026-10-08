@@ -84,8 +84,8 @@ What the load does and doesn't do:
 uvicorn main:app --reload --port 8000
 ```
 
-If it says `No contract data in PostgreSQL yet`, do step 3. If it says the database is at the wrong
-migration, run `alembic upgrade head`.
+If it says the database is at the wrong migration, run `alembic upgrade head`. Before step 3 the app runs but
+shows no contracts.
 
 ## 5. Run the frontend
 
@@ -113,8 +113,14 @@ ECS/Fargate scheduled task, a CI job) with the `.env` values as environment vari
 
 ## Notes
 
-- Until the paged worklist API is built, the app still holds contracts in memory: it loads the top
-  `STATE_MAX_ROWS` (20,000) live contracts by risk. That is fine for development; it is not the fix for 300K.
-- Checks (need PostgreSQL running, nothing else): `python tests/check_ingest.py`,
-  `python tests/check_schema.py`, `python tests/check_access.py`, `python tests/check_sso.py`.
-  Point `TEST_PG_ADMIN_DSN` at your server if it isn't the compose one.
+- The app never loads the whole book: the worklist is read one page at a time, search/sort/filters run in
+  PostgreSQL, and the KPIs and charts are computed there too. Start the API before any data is loaded and it
+  runs - the screens are simply empty (the API answers "No contract data has been loaded yet").
+- Each user keeps one saved worklist view (columns and sort), changed from the worklist's "columns" picker
+  and column headers.
+- Contact details (address, phone ...) are loaded but only sent when a user clicks "Show contact details" in a
+  contract's Details tab; each request is written to the audit trail.
+- A new data load while someone is scrolling shows "New data has been loaded" with a Refresh button.
+- Checks (need PostgreSQL running, nothing else): `python tests/check_ingest.py`, `check_worklist.py`,
+  `check_schema.py`, `check_access.py`, `check_sso.py`. Point `TEST_PG_ADMIN_DSN` at your server if it isn't
+  the compose one.

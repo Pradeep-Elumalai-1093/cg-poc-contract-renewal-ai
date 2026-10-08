@@ -14,7 +14,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -23,61 +22,38 @@ os.chdir(BACKEND)
 
 import pg  # noqa: E402  (tests/pg.py)
 
-tmp = tempfile.mkdtemp()
+DB = pg.new_database()
 os.environ.update(
-    DATABASE_URL=pg.new_database(),
-    DATA_SOURCE="synthetic",
+    DATABASE_URL=DB,
     AUTH_MODE="dev",
     ENV="development",
     BOOTSTRAP_ADMIN_EMAILS="boss@x.com",
     SESSION_SECRET="x" * 40,
 )
 
+# C1 spans two areas on purpose: that's the case where one shared customer view would leak.
+pg.load_contracts(DB, [
+    dict(CONTRACTID="A1", CUSTOMERID="C1", CTXID="034"), dict(CONTRACTID="A2", CUSTOMERID="C2", CTXID="034"),
+    dict(CONTRACTID="B1", CUSTOMERID="C1", CTXID="049"), dict(CONTRACTID="B2", CUSTOMERID="C3", CTXID="049"),
+    dict(CONTRACTID="N1", CUSTOMERID="C4", CTXID=None),  # no CTX -> admin-only
+])
+for cid, ctx in (("A1", "034"), ("B1", "049")):
+    pg.query(DB, "INSERT INTO ai_recommendations.contract_recommendation (contractid, ctx, ai_recommendation, retention_action_name, outcome) "
+                 "VALUES (%s, %s, 'why', 'Free service check-in', 'Engaged')", cid, ctx)
+
+
+def outcome_of(cid):
+    return pg.query(DB, "SELECT outcome FROM ai_recommendations.contract_recommendation WHERE contractid = %s AND is_latest", cid)[0]["outcome"]
+
+
 from fastapi.testclient import TestClient  # noqa: E402
 
-import agents  # noqa: E402
 import main  # noqa: E402
-from state import state  # noqa: E402
-
-
-def contract(cid, cust, ctx, segment="Standard"):
-    return {
-        "contractId": cid, "customerId": cust, "customerName": f"Customer {cust}", "ctx": ctx,
-        "region": "ETT", "channel": "Direct", "bucket": ">90", "segment": segment, "riskScore": 40,
-        "contractValue": 1000, "lastMilestoneProcessed": None, "equipment": {"type": "Reefer Unit", "count": 1, "avgAgeYears": 1},
-    }
-
-
-def trace_row(cid):
-    return {"contractId": cid, "retryCount": 0, "pass": True, "escalated": False, "latencyMs": 10, "costUsd": 0.01,
-            "recommendation": {"campaign": "Free service check-in"}, "outcome": "Engaged", "context": {"risk_score": 40}}
-
-
-# C1 spans two areas on purpose: that's the case where one shared customer summary would leak.
-state.contracts = [
-    contract("A1", "C1", "034"), contract("A2", "C2", "034"),
-    contract("B1", "C1", "049"), contract("B2", "C3", "049"),
-    contract("N1", "C4", None),  # no CTX -> admin-only
-]
-state._index()
-state.trace = [trace_row("A1"), trace_row("B1")]
-state.ticket_summaries, state.customer_summaries = {}, {}
-
-
-async def stub_ticket(c):
-    return {"status": "done", "data": f"ticket summary {c['contractId']}"}
-
-
-async def stub_customer(customer_id, name, contracts):
-    return {"status": "done", "data": "customer summary over " + ",".join(c["contractId"] for c in contracts)}
-
-
-agents.run_ticket_summary_agent = stub_ticket
-agents.run_customer_summary_agent = stub_customer
 
 
 def ids(resp):
-    return {c["contractId"] for c in resp.json()}
+    assert resp.status_code == 200, resp.text
+    return {r["id"] for r in resp.json()["rows"]}
 
 
 def detail(resp):
@@ -86,7 +62,7 @@ def detail(resp):
 
 with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(main.app) as anon, TestClient(main.app) as mallory:
     # 1. nobody is logged in
-    assert anon.get("/api/contracts").status_code == 401
+    assert anon.get("/api/worklist").status_code == 401
     assert anon.get("/api/auth/me").status_code == 401
     assert anon.get("/api/auth/config").json()["mode"] == "dev"
 
@@ -94,7 +70,7 @@ with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(mai
     r = alice.post("/api/auth/dev/login", json={"email": "Alice@X.com"})
     assert r.status_code == 200 and r.json()["status"] == "pending" and r.json()["email"] == "alice@x.com", r.text
     assert alice.get("/api/auth/me").json()["status"] == "pending"
-    for path in ("/api/contracts", "/api/trace", "/api/metrics", "/api/model-info", "/api/region-summary"):
+    for path in ("/api/worklist", "/api/summary", "/api/contracts/A1", "/api/me/worklist-view", "/api/model-info"):
         resp = alice.get(path)
         assert resp.status_code == 403 and detail(resp) == "access_pending", (path, resp.status_code, resp.text)
     assert alice.post("/api/auth/dev/login", json={"email": "not-an-email"}).status_code == 400
@@ -109,7 +85,7 @@ with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(mai
     assert [u["status"] for u in users][:2] == ["pending", "pending"], users  # pending first
     uid = {u["email"]: u["id"] for u in users}
 
-    # 4. CTX codes were auto-discovered from the contracts and can be named
+    # 4. CTX codes were discovered from the loaded contracts and can be named
     ctx = boss.get("/api/admin/ctx").json()
     assert {c["code"] for c in ctx["ctxs"]} == {"034", "049"} and ctx["contractsWithoutCtx"] == 1, ctx
     assert boss.put("/api/admin/ctx/034", json={"name": "Spain"}).json()["name"] == "Spain"
@@ -123,77 +99,81 @@ with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(mai
     assert me["status"] == "active" and me["ctxs"] == [{"code": "034", "name": "Spain"}] and me["allCtx"] is False
 
     # 6. alice sees only CTX 034 - not other areas, not the no-CTX contract
-    assert ids(alice.get("/api/contracts")) == {"A1", "A2"}
-    assert ids(boss.get("/api/contracts")) == {"A1", "A2", "B1", "B2", "N1"}
+    assert ids(alice.get("/api/worklist")) == {"A1", "A2"}
+    assert ids(boss.get("/api/worklist")) == {"A1", "A2", "B1", "B2", "N1"}
+    assert ids(alice.get("/api/worklist?area=049")) == set()  # asking for another area's code doesn't widen the scope
 
-    # 7. aggregates and trace are computed over the caller's scope only
-    assert {t["contractId"] for t in alice.get("/api/trace").json()} == {"A1"}
-    assert alice.get("/api/metrics").json()["totalRuns"] == 1 and boss.get("/api/metrics").json()["totalRuns"] == 2
-    assert alice.get("/api/region-summary").json()["global"]["contractCount"] == 2
-    assert boss.get("/api/region-summary").json()["global"]["contractCount"] == 5
-    assert alice.get("/api/campaigns").json()["Free service check-in"]["assigned"] == 1
-    assert sum(alice.get("/api/outcome-by-risk-bucket").json()["engaged"]) == 1
+    # 7. the summary is computed over the caller's scope only
+    sa, sb = alice.get("/api/summary").json(), boss.get("/api/summary").json()
+    assert sa["kpis"]["contracts"] == 2 and sb["kpis"]["contracts"] == 5, (sa["kpis"], sb["kpis"])
+    assert [c["assigned"] for c in sa["campaigns"]] == [1] and [c["assigned"] for c in sb["campaigns"]] == [2]
+    assert sum(sa["outcomeByRisk"]["engaged"]) == 1 and sum(sb["outcomeByRisk"]["engaged"]) == 2
+    assert {r["ctx"] for r in sa["byCtx"]} == {"034"}
 
     # 8. writes on another area's records look like "not found", not "forbidden"
     for path, body in (("/api/feedback", {"contractId": "B1", "outcome": "Declined"}),
                        ("/api/action-status", {"contractId": "B1", "actionStatus": "Action done"})):
         r = alice.post(path, json=body)
         assert r.status_code == 404, (path, r.status_code)
-        assert state.latest_trace_for("B1").get("outcome") == "Engaged"  # untouched
+    assert outcome_of("B1") == "Engaged"  # untouched
     assert alice.post("/api/feedback", json={"contractId": "A1", "outcome": "Declined"}).status_code == 200
+    assert outcome_of("A1") == "Declined"
     assert alice.post("/api/action-status", json={"contractId": "A1", "actionStatus": "Action done"}).status_code == 200
-    assert alice.post("/api/ticket-summaries/run", json={"contractId": "B1"}).status_code == 404
-    assert alice.post("/api/ticket-summaries/run", json={"contractId": "N1"}).status_code == 404
-    assert alice.post("/api/ticket-summaries/run", json={"contractId": "A1"}).status_code == 200
+    assert alice.post("/api/action-status", json={"contractId": "A1", "actionStatus": "Maybe"}).status_code == 422
+    assert alice.post("/api/feedback", json={"contractId": "A2", "outcome": "Engaged"}).status_code == 404  # no recommendation yet
 
-    # 9. customer summaries: per (customer, CTX), built only from that CTX's contracts
-    s034 = boss.post("/api/customer-summaries/run", json={"customerId": "C1", "ctx": "034"}).json()["data"]
-    s049 = boss.post("/api/customer-summaries/run", json={"customerId": "C1", "ctx": "049"}).json()["data"]
-    assert s034 == "customer summary over A1" and s049 == "customer summary over B1", (s034, s049)
-    assert set(boss.get("/api/customer-summaries").json()) == {"C1|034", "C1|049"}
-    assert set(alice.get("/api/customer-summaries").json()) == {"C1|034"}  # the 049 summary never reaches her
-    assert alice.post("/api/customer-summaries/run", json={"customerId": "C1", "ctx": "049"}).status_code == 404
-    assert alice.post("/api/customer-summaries/run", json={"customerId": "C4"}).status_code == 404  # no-CTX customer
-    assert alice.post("/api/customer-summaries/run", json={"customerId": "C1", "ctx": "034"}).status_code == 200
+    # 9. a contract's detail, the customer portfolio and contact data respect the scope
+    assert alice.get("/api/contracts/B1").status_code == 404 and alice.get("/api/contracts/N1").status_code == 404
+    d = alice.get("/api/contracts/A1").json()
+    assert d["contract"]["contractId"] == "A1" and d["trace"]["recommendation"]["campaign"] == "Free service check-in"
+    assert [p["contractId"] for p in d["portfolio"]] == ["A1"], d["portfolio"]  # C1 also holds B1 in 049: it must not appear
+    assert not any(i["key"] in ("address", "phoneopen", "postcode") for g in d["details"] for i in g["items"]), "personal data in the detail"
+    assert alice.post("/api/contracts/B1/contact").status_code == 404
+    c = alice.post("/api/contracts/A1/contact").json()["contact"]
+    assert {"address", "phoneopen"} <= {i["key"] for i in c}
 
-    # 10. pipeline / reset / admin routes are admin-only
-    for method, path in (("get", "/api/batch/status"), ("post", "/api/batch/run"), ("post", "/api/reset"),
-                         ("get", "/api/admin/users"), ("get", "/api/admin/audit"), ("get", "/api/admin/ctx")):
+    # 10. each user has their own worklist view; bad requests are refused
+    assert alice.put("/api/me/worklist-view", json={"columns": ["ctxid", "company"]}).json()["columns"] == ["ctxid", "company"]
+    assert boss.get("/api/me/worklist-view").json()["columns"] != ["ctxid", "company"]
+    assert alice.put("/api/me/worklist-view", json={"columns": ["no_such_column"]}).status_code == 400
+
+    # 11. admin routes are admin-only
+    for method, path in (("get", "/api/admin/users"), ("get", "/api/admin/audit"), ("get", "/api/admin/ctx")):
         resp = getattr(alice, method)(path)
         assert resp.status_code == 403 and detail(resp) == "admin_required", (path, resp.status_code, resp.text)
 
-    # 11. a regional user holds several CTXs and sees exactly their union
+    # 12. a regional user holds several CTXs and sees exactly their union
     boss.put(f"/api/admin/users/{uid['mallory@x.com']}/ctx", json={"ctxs": ["034", "049"]})
-    assert ids(mallory.get("/api/contracts")) == {"A1", "A2", "B1", "B2"}
+    assert ids(mallory.get("/api/worklist")) == {"A1", "A2", "B1", "B2"}
 
-    # 12. removing every CTX puts a user back to pending immediately (no stale session)
+    # 13. removing every CTX puts a user back to pending immediately (no stale session)
     r = boss.put(f"/api/admin/users/{uid['alice@x.com']}/ctx", json={"ctxs": []})
     assert r.json()["status"] == "pending"
-    assert detail(alice.get("/api/contracts")) == "access_pending"
+    assert detail(alice.get("/api/worklist")) == "access_pending"
     boss.put(f"/api/admin/users/{uid['alice@x.com']}/ctx", json={"ctxs": ["034"]})
 
-    # 13. disable / re-enable
+    # 14. disable / re-enable
     assert boss.put(f"/api/admin/users/{uid['alice@x.com']}/status", json={"disabled": True}).json()["status"] == "disabled"
-    assert detail(alice.get("/api/contracts")) == "account_disabled"
+    assert detail(alice.get("/api/worklist")) == "account_disabled"
     # assigning a CTX must not silently re-enable a disabled user
     assert boss.put(f"/api/admin/users/{uid['alice@x.com']}/ctx", json={"ctxs": ["034", "049"]}).json()["status"] == "disabled"
     assert boss.put(f"/api/admin/users/{uid['alice@x.com']}/status", json={"disabled": False}).json()["status"] == "active"
-    assert ids(alice.get("/api/contracts")) == {"A1", "A2", "B1", "B2"}
+    assert ids(alice.get("/api/worklist")) == {"A1", "A2", "B1", "B2"}
 
-    # 14. the last active admin can't be demoted or disabled
+    # 15. the last active admin can't be demoted or disabled
     boss_id = uid["boss@x.com"]
     assert boss.put(f"/api/admin/users/{boss_id}/role", json={"role": "user"}).status_code == 400
     assert boss.put(f"/api/admin/users/{boss_id}/status", json={"disabled": True}).status_code == 400
     boss.put(f"/api/admin/users/{uid['alice@x.com']}/role", json={"role": "admin"})
-    assert ids(alice.get("/api/contracts")) == {"A1", "A2", "B1", "B2", "N1"}  # admin sees everything, incl. no-CTX
+    assert ids(alice.get("/api/worklist")) == {"A1", "A2", "B1", "B2", "N1"}  # admin sees everything, incl. no-CTX
     assert boss.put(f"/api/admin/users/{boss_id}/role", json={"role": "user"}).status_code == 200  # now allowed
     assert alice.put(f"/api/admin/users/{uid['alice@x.com']}/role", json={"role": "user"}).status_code == 400  # alice is last
 
-    # 15. logging out ends the session
+    # 16. logging out ends the session
     assert alice.post("/api/auth/logout").status_code == 200
-    assert alice.get("/api/contracts").status_code == 401
+    assert alice.get("/api/worklist").status_code == 401
 
-    # 16. everything above left an audit trail
+    # 17. everything above left an audit trail
     carol = TestClient(main.app)
     carol.post("/api/auth/dev/login", json={"email": "boss@x.com"})  # boss was demoted -> no admin route access
     assert carol.get("/api/admin/audit").status_code == 403
@@ -201,7 +181,7 @@ with TestClient(main.app) as boss, TestClient(main.app) as alice, TestClient(mai
     audit = alice.get("/api/admin/audit").json()
     seen = {a["action"] for a in audit}
     assert {"user.first_login", "user.bootstrap_admin", "user.ctx_assigned", "user.role_changed",
-            "user.disabled", "user.enabled", "ctx.renamed"} <= seen, seen
+            "user.disabled", "user.enabled", "ctx.renamed", "contact.viewed"} <= seen, seen
     assert any(a["action"] == "user.ctx_assigned" and a["detail"]["after"] == ["034"] for a in audit)
 
 

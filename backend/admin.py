@@ -14,8 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from auth import admin_user
-from db import AuditLog, Ctx, User, UserCtx, audit, get_db, iso, reconcile_status
-from state import state
+from db import AuditLog, Ctx, User, UserCtx, audit, get_db, iso, live_contract_counts, reconcile_status, sync_ctx_codes
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_user)])
 
@@ -130,14 +129,17 @@ def set_disabled(user_id: UUID, body: DisableIn, actor: User = Depends(admin_use
 
 @router.get("/ctx")
 def list_ctx(db: Session = Depends(get_db)):
-    counts = state.ctx_counts()
+    counts = live_contract_counts(db)
+    # A load can introduce an area nobody has seen yet; registering it here lets an admin assign it right away.
+    if sync_ctx_codes(db, [c for c in counts if c]):
+        db.commit()
     rows = [
         {"code": c.code, "name": c.name, "contractCount": counts.get(c.code, 0)}
         for c in db.scalars(select(Ctx).order_by(Ctx.code))
     ]
     # Contracts with no (or an unparseable) CTX are visible to admins only -
     # surfacing the count tells you when the source data is missing the column.
-    return {"ctxs": rows, "contractsWithoutCtx": state.count_without_ctx()}
+    return {"ctxs": rows, "contractsWithoutCtx": counts.get(None, 0)}
 
 
 class CtxNameIn(BaseModel):

@@ -26,6 +26,16 @@ async function request(path, options) {
   return res.json();
 }
 
+// Arrays become repeated keys (?area=034&area=049); empty values are left out.
+const qs = (params) => {
+  const u = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (Array.isArray(v)) v.forEach((x) => u.append(k, x));
+    else if (v !== null && v !== undefined && v !== "") u.append(k, v);
+  });
+  return u.toString();
+};
+
 const put = (path, body) => request(path, { method: "PUT", body: JSON.stringify(body) });
 
 export const api = {
@@ -44,26 +54,17 @@ export const api = {
   setUserDisabled: (userId, disabled) => put(`/api/admin/users/${userId}/status`, { disabled }),
   renameCtx: (code, name) => put(`/api/admin/ctx/${code}`, { name }),
 
-  // --- app data ---
-  getContracts: () => request("/api/contracts"),
-  getTrace: () => request("/api/trace"),
-  getMetrics: () => request("/api/metrics"),
-  getCampaigns: () => request("/api/campaigns"),
-  getBatchStatus: () => request("/api/batch/status"),
-  runBatch: () => request("/api/batch/run", { method: "POST" }),
+  // --- contracts: nothing here ever asks for "all of them" - the worklist is paged, the rest is aggregated server-side ---
+  getWorklist: (params, signal) => request(`/api/worklist?${qs(params)}`, { signal }),
+  getSummary: (params, signal) => request(`/api/summary?${qs(params)}`, { signal }),
+  getContract: (id, signal) => request(`/api/contracts/${encodeURIComponent(id)}`, { signal }),
+  // Personal contact data only leaves the server on this explicit call, which is audited.
+  revealContact: (id) => request(`/api/contracts/${encodeURIComponent(id)}/contact`, { method: "POST" }),
+  getWorklistView: () => request("/api/me/worklist-view"),
+  saveWorklistView: (view) => put("/api/me/worklist-view", view),
   sendFeedback: (contractId, outcome, note) =>
-    request("/api/feedback", { method: "POST", body: JSON.stringify({ contractId, outcome, note }) }),
+    request("/api/feedback", { method: "POST", body: JSON.stringify({ contractId, ...(outcome !== undefined && { outcome }), ...(note !== undefined && { note }) }) }),
   setActionStatus: (contractId, actionStatus) =>
     request("/api/action-status", { method: "POST", body: JSON.stringify({ contractId, actionStatus }) }),
   getModelInfo: () => request("/api/model-info"),
-  getTicketSummaries: () => request("/api/ticket-summaries"),
-  runTicketSummary: (contractId) =>
-    request("/api/ticket-summaries/run", { method: "POST", body: JSON.stringify({ contractId }) }),
-  getCustomerSummaries: () => request("/api/customer-summaries"),
-  // A customer summary is per (customer, CTX): pass the selected contract's ctx.
-  runCustomerSummary: (customerId, ctx) =>
-    request("/api/customer-summaries/run", { method: "POST", body: JSON.stringify({ customerId, ctx: ctx || null }) }),
-  getOutcomeByRiskBucket: () => request("/api/outcome-by-risk-bucket"),
-  getRegionSummary: () => request("/api/region-summary"),
-  reset: () => request("/api/reset", { method: "POST" }),
 };

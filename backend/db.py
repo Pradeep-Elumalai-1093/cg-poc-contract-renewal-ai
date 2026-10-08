@@ -23,14 +23,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import DateTime, ForeignKey, MetaData, String, Uuid, create_engine, func, select, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL is not set. Point it at PostgreSQL, e.g. "
-        "postgresql+psycopg://app:change-me@localhost:5433/uda_1325 (see docker-compose.yml and .env.example)."
+        "postgresql+psycopg://app:change-me@localhost:5432/uda_1325 (see docker-compose.yml and .env.example)."
     )
 SCHEMA = os.environ.get("DB_SCHEMA", "ai_recommendations")
 DATA_SCHEMA = os.environ.get("DB_SCHEMA_DATA", "app_data")
@@ -114,6 +114,16 @@ class AuditLog(Base):
     detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
+class WorklistView(Base):
+    """A user's one saved worklist view: which columns, which sort."""
+    __tablename__ = "worklist_view"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey(f"{SCHEMA}.users.id"), primary_key=True)
+    columns: Mapped[list[str]] = mapped_column(ARRAY(String))
+    sort_key: Mapped[str] = mapped_column(String)
+    sort_dir: Mapped[str] = mapped_column(String(4))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_NOW)
+
+
 def ensure_migrated() -> None:
     """Refuses to start against a database that isn't at the latest Alembic
     revision, with the command that fixes it - far better than a cryptic
@@ -131,6 +141,16 @@ def ensure_migrated() -> None:
             f"Database is at migration {current!r} but the app needs {head!r}. "
             "Run `alembic upgrade head` from the backend folder."
         )
+
+
+def live_contract_counts(session: Session) -> dict:
+    """{ctx code (None = no CTX): live contracts} from the loaded data; empty before the first ingest."""
+    from sqlalchemy.exc import ProgrammingError
+    try:
+        return {c: n for c, n in session.execute(text(f'SELECT ctxid, count(*) FROM "{DATA_SCHEMA}".contract WHERE in_scope GROUP BY ctxid'))}
+    except ProgrammingError:
+        session.rollback()
+        return {}
 
 
 def get_db():

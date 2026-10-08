@@ -134,7 +134,7 @@ while not server.started:
 import pg  # noqa: E402  (tests/pg.py)
 
 os.environ.update(
-    DATABASE_URL=pg.new_database(), DATA_SOURCE="synthetic", ENV="development", AUTH_MODE="sso",
+    DATABASE_URL=pg.new_database(), ENV="development", AUTH_MODE="sso",
     MS_TENANT_ID=TENANT, MS_CLIENT_ID=CLIENT_ID, MS_CLIENT_SECRET=CLIENT_SECRET, MS_REDIRECT_URI=REDIRECT,
     OIDC_METADATA_URL=f"{idp.state.base}/tenant/v2.0/.well-known/openid-configuration",
     BOOTSTRAP_ADMIN_EMAILS="boss@x.com", SESSION_SECRET="s" * 40, APP_URL="/",
@@ -183,7 +183,7 @@ with TestClient(main.app) as c:
     sso_login(other, oid="oid-999", email="newbie@x.com")
     me = other.get("/api/auth/me").json()
     assert me["status"] == "pending" and me["role"] == "user", me
-    assert other.get("/api/contracts").json()["detail"] == "access_pending"
+    assert other.get("/api/worklist").json()["detail"] == "access_pending"
 
     # 4. forged / invalid tokens are all rejected and leave NO session behind
     for bad in ("bad_nonce", "bad_sig", "bad_aud", "bad_iss", "expired", "no_id_token"):
@@ -191,7 +191,7 @@ with TestClient(main.app) as c:
         r = sso_login(victim, mode=bad, oid="oid-evil", email="boss@x.com")
         assert r.status_code == 400, (bad, r.status_code, r.text)
         assert victim.get("/api/auth/me").status_code == 401, bad
-        assert victim.get("/api/contracts").status_code == 401, bad
+        assert victim.get("/api/worklist").status_code == 401, bad
 
     # 5. a tampered state parameter is rejected
     t = TestClient(main.app)
