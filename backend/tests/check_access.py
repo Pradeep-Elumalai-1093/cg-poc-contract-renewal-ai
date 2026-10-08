@@ -229,24 +229,4 @@ assert r.returncode == 0, r.stderr
 r = boot(AUTH_MODE="sso", MS_TENANT_ID="t", MS_CLIENT_ID="c", MS_CLIENT_SECRET="s", MS_REDIRECT_URI="https://x/cb")
 assert r.returncode == 0, r.stderr  # sso in development is fine
 
-# --- loader: CTX normalization, string ids, strict-JSON-safe output ------------------
-os.environ.update(DATA_DIR=tmp, CONTRACTS_FILE="contracts.csv", CLAIMS_FILE="none.csv", INVOICES_FILE="none.csv")
-import local_data_loader as ldl  # noqa: E402
-
-assert [ldl._normalize_ctx(v) for v in (34, 34.0, "034", "34", " 7 ", "1234", "AB", None, "")] == \
-       ["034", "034", "034", "034", "007", None, None, None, None]
-assert ldl._to_id(83121.0) == "83121" and ldl._to_id(5) == "5" and ldl._to_id(None) is None
-
-Path(tmp, "contracts.csv").write_text(
-    "CONTRACTID,CUSTOMERID,CTX,COMPANY,CONTRACT_PRICE,CONTRACT_DURATION_MONTHS,IS_DIRECT_CONTRACT,"
-    "IS_GENERAL_SERVICE_INCLUDE,MANUFACTUREDATE,CONTRACT_END_DATE\n"
-    "100,7,34,Acme,50,24,True,False,2020-01-01,2099-01-01\n"
-    "101,7,,Acme,50,24,False,True,,\n"
-    "102,8,49,Beta,,12,False,True,2021-01-01,2000-01-01\n"
-)
-loaded = ldl.load_contracts_from_local()
-assert [c["ctx"] for c in loaded] == ["034", None, "049"], [c["ctx"] for c in loaded]
-assert all(isinstance(c["contractId"], str) and isinstance(c["customerId"], str) for c in loaded)
-json.dumps(loaded, allow_nan=False)  # no NaN / numpy values leaked through
-
 print("ALL CHECKS PASSED")

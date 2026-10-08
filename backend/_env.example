@@ -73,3 +73,30 @@ OIDC_METADATA_URL=
 # Column on the contract table holding the 3-digit CTX (area code). Leave
 # blank to try CTX, CTXID, CTX_ID, CTX_CODE in that order.
 CTX_COLUMN=
+
+# ---- Data load (python -m ingest) ---------------------------------------------------------
+# Local files (development):  python -m ingest --source local --contracts ... --claims ...
+INGEST_CONTRACTS_FILE=
+INGEST_CLAIMS_FILE=
+# Snowflake (python -m ingest --source snowflake). Use a key pair for a scheduled job.
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_ROLE=
+SNOWFLAKE_PRIVATE_KEY_PATH=
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_PASSWORD=
+SNOWFLAKE_CONTRACT_TABLE=       # e.g. DB.SCHEMA.CONTRACT
+SNOWFLAKE_CLAIMS_TABLE=
+# Load rules (defaults shown)
+INGEST_LIVE_STATUS=live          # CONTRACT_STATUS value that means a live contract
+INGEST_LOST_WINDOW_DAYS=90       # a latest-version contract expired within this many days still shows as Lost
+INGEST_MIN_CTX_SAMPLE=30         # fewer valued contracts than this: the CTX uses the all-CTX median
+INGEST_MAX_DROP_PERCENT=50       # refuse an extract with this much fewer live contracts than the current data
+
+# ---- App ----------------------------------------------------------------------------------
+# DATA_SOURCE=postgres reads what the ingest loaded. The app still holds contracts in memory
+# until the paged worklist API replaces it, so these cap what it loads (development size).
+DATA_SOURCE=postgres
+STATE_MAX_ROWS=20000
+STATE_CLAIMS_PER_CONTRACT=15

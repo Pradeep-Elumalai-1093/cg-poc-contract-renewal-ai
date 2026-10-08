@@ -1,0 +1,6 @@
+# Only the machine that runs `python -m ingest --source snowflake` needs these.
+# Plain connector + pyarrow on purpose: the connector's "[pandas]" extra pins pandas below 3
+# and would silently downgrade the version in requirements.txt.
+-r requirements.txt
+snowflake-connector-python==4.8.0
+pyarrow==25.0.1

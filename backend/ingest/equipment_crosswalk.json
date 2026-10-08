@@ -1,0 +1,9 @@
+{
+  "_note": "PLACEHOLDER - to be built with the client against the real MODEL_CATEGORY values. Anything unmapped loads as 'Unclassified' and is listed (with counts) in every ingest report, so the gaps are visible instead of being guessed.",
+  "default": "Unclassified",
+  "MODEL_CATEGORY": {
+    "LCVMT": "Reefer Unit",
+    "IND": "Rooftop AC Unit",
+    "POWER GENERATION UNIT": "APU (Auxiliary Power Unit)"
+  }
+}
