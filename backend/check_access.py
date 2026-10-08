@@ -3,8 +3,8 @@ Phase 1 access-control check. Plain asserts, no framework:
 
     cd backend && python tests/check_access.py
 
-Drives the real FastAPI app (dev auth mode, throwaway SQLite database,
-synthetic contracts replaced by a small hand-built set) through the whole
+Drives the real FastAPI app (dev auth mode, throwaway PostgreSQL database
+migrated by Alembic, synthetic contracts replaced by a small hand-built set) through the whole
 lifecycle: first login -> pending -> admin assigns CTX -> scoped data ->
 admin-only locks -> last-admin protection -> disable/enable -> audit.
 The LLM agents are stubbed; nothing here calls a model.
@@ -21,9 +21,11 @@ BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 os.chdir(BACKEND)
 
+import pg  # noqa: E402  (tests/pg.py)
+
 tmp = tempfile.mkdtemp()
 os.environ.update(
-    DATABASE_URL=f"sqlite:///{tmp}/check.db",
+    DATABASE_URL=pg.new_database(),
     DATA_SOURCE="synthetic",
     AUTH_MODE="dev",
     ENV="development",

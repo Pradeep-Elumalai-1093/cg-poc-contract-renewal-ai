@@ -5,8 +5,8 @@ Admin-only endpoints behind the Access page: who has signed in, which CTXs
 Every route here requires an active admin (router-level dependency), and
 every change writes an audit row in the same transaction as the change.
 """
-import json
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ _STATUS_ORDER = {"pending": 0, "active": 1, "disabled": 2}
 
 def _user_row(user: User) -> dict:
     return {
-        "id": user.id,
+        "id": str(user.id),
         "email": user.email,
         "name": user.name,
         "role": user.role,
@@ -34,7 +34,7 @@ def _user_row(user: User) -> dict:
     }
 
 
-def _get_user(db: Session, user_id: int) -> User:
+def _get_user(db: Session, user_id: UUID) -> User:
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -64,7 +64,7 @@ class CtxAssignIn(BaseModel):
 
 
 @router.put("/users/{user_id}/ctx")
-def assign_ctx(user_id: int, body: CtxAssignIn, actor: User = Depends(admin_user), db: Session = Depends(get_db)):
+def assign_ctx(user_id: UUID, body: CtxAssignIn, actor: User = Depends(admin_user), db: Session = Depends(get_db)):
     user = _get_user(db, user_id)
     wanted = sorted({c.strip() for c in body.ctxs if c.strip()})
     known = set(db.scalars(select(Ctx.code)))
@@ -94,7 +94,7 @@ class RoleIn(BaseModel):
 
 
 @router.put("/users/{user_id}/role")
-def set_role(user_id: int, body: RoleIn, actor: User = Depends(admin_user), db: Session = Depends(get_db)):
+def set_role(user_id: UUID, body: RoleIn, actor: User = Depends(admin_user), db: Session = Depends(get_db)):
     user = _get_user(db, user_id)
     if user.role == "admin" and body.role == "user" and user.status == "active":
         _ensure_another_active_admin(db, user)
@@ -112,7 +112,7 @@ class DisableIn(BaseModel):
 
 
 @router.put("/users/{user_id}/status")
-def set_disabled(user_id: int, body: DisableIn, actor: User = Depends(admin_user), db: Session = Depends(get_db)):
+def set_disabled(user_id: UUID, body: DisableIn, actor: User = Depends(admin_user), db: Session = Depends(get_db)):
     user = _get_user(db, user_id)
     previous = user.status
     if body.disabled:
@@ -161,12 +161,14 @@ def rename_ctx(code: str, body: CtxNameIn, actor: User = Depends(admin_user), db
 @router.get("/audit")
 def list_audit(limit: int = 100, db: Session = Depends(get_db)):
     limit = min(max(limit, 1), 500)
-    rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(limit))
+    # UUIDv7 ids are time-ordered, but two rows in the same millisecond have no
+    # guaranteed order between them - the timestamp leads, the id breaks ties.
+    rows = db.scalars(select(AuditLog).order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(limit))
     return [
         {
-            "id": r.id, "at": iso(r.at), "actorEmail": r.actor_email, "action": r.action,
+            "id": str(r.id), "at": iso(r.at), "actorEmail": r.actor_email, "action": r.action,
             "entity": r.entity, "entityId": r.entity_id, "ctxCode": r.ctx_code,
-            "detail": json.loads(r.detail) if r.detail else None,
+            "detail": r.detail,
         }
         for r in rows
     ]

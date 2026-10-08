@@ -34,7 +34,7 @@ def _sync_ctx() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     auth.validate_config()  # refuses to start insecurely (e.g. dev auth in production)
-    db.init_db()
+    db.ensure_migrated()    # refuses to start against a database that isn't at the latest migration
     _sync_ctx()
     yield
 

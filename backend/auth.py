@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import secrets
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -115,21 +116,24 @@ def upsert_user(db: Session, oid: str, email: str, name: str) -> User:
     return user
 
 
-def _login_user(oid: str, email: str, name: str) -> int:
+def _login_user(oid: str, email: str, name: str) -> uuid.UUID:
     with SessionLocal() as db:
         return upsert_user(db, oid, email, name).id
 
 
-def start_session(request: Request, user_id: int) -> None:
+def start_session(request: Request, user_id: uuid.UUID) -> None:
     # Clear first so nothing from before login (SSO state, an earlier
     # user's session) survives into the authenticated session.
     request.session.clear()
-    request.session["uid"] = user_id
+    request.session["uid"] = str(user_id)
 
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    uid = request.session.get("uid")
-    user = db.get(User, uid) if uid else None
+    user = None
+    try:
+        user = db.get(User, uuid.UUID(request.session.get("uid", "")))
+    except (ValueError, AttributeError, TypeError):
+        pass  # no session, or a cookie holding something that isn't a user id
     if user is None:
         raise HTTPException(status_code=401, detail="not_authenticated")
     return user
@@ -171,7 +175,7 @@ def get_scope(user: User = Depends(active_user)) -> Scope:
 
 def user_payload(user: User) -> dict:
     return {
-        "id": user.id,
+        "id": str(user.id),
         "email": user.email,
         "name": user.name,
         "role": user.role,

@@ -40,9 +40,18 @@ SESSION_MAX_AGE_HOURS=12
 # no active admin exists yet - it can't be used to take over a live install.
 BOOTSTRAP_ADMIN_EMAILS=you@company.com
 
-# Users, access assignments and the audit log. SQLite by default; use
-# Postgres for anything shared, e.g. postgresql+psycopg://user:pass@host/db
-DATABASE_URL=sqlite:///./app.db
+# PostgreSQL 18, database uda_1325 (start one locally with `docker compose up -d db`).
+# Create/upgrade the tables with `alembic upgrade head` - the app refuses to start otherwise.
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/uda_1325
+# Schemas inside that database. DB_SCHEMA holds app configuration (users, access, audit)
+# AND the AI result tables the AWS job writes; DB_SCHEMA_DATA holds the Snowflake-loaded
+# contract data. Change these only if your DBA has named the schemas differently.
+DB_SCHEMA=ai_recommendations
+DB_SCHEMA_DATA=app_data
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=5
+# Used only by the test scripts in backend/tests: a server you may create databases on.
+# TEST_PG_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:5432/postgres
 
 # --- Microsoft SSO (only needed if AUTH_MODE=sso) ---
 MS_TENANT_ID=
@@ -63,4 +72,4 @@ OIDC_METADATA_URL=
 # =====================================================================
 # Column on the contract table holding the 3-digit CTX (area code). Leave
 # blank to try CTX, CTXID, CTX_ID, CTX_CODE in that order.
-CTX_COLUMN=CTX
+CTX_COLUMN=

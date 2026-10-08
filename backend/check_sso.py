@@ -17,7 +17,6 @@ import os
 import secrets
 import socket
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -132,9 +131,10 @@ while not server.started:
     time.sleep(0.05)
 
 # ------------------------------------------------------------------ the app under test
-tmp = tempfile.mkdtemp()
+import pg  # noqa: E402  (tests/pg.py)
+
 os.environ.update(
-    DATABASE_URL=f"sqlite:///{tmp}/sso.db", DATA_SOURCE="synthetic", ENV="development", AUTH_MODE="sso",
+    DATABASE_URL=pg.new_database(), DATA_SOURCE="synthetic", ENV="development", AUTH_MODE="sso",
     MS_TENANT_ID=TENANT, MS_CLIENT_ID=CLIENT_ID, MS_CLIENT_SECRET=CLIENT_SECRET, MS_REDIRECT_URI=REDIRECT,
     OIDC_METADATA_URL=f"{idp.state.base}/tenant/v2.0/.well-known/openid-configuration",
     BOOTSTRAP_ADMIN_EMAILS="boss@x.com", SESSION_SECRET="s" * 40, APP_URL="/",
