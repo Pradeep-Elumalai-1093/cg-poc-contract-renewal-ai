@@ -29,6 +29,10 @@ from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reaso
 # llm_client.py's LLM_PROVIDER - one env var, no code change to flip it.
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "local")
 
+# Synthetic-only stand-ins for the real 3-digit area codes (the real ones
+# come from the contract table's CTX column - see local_data_loader.py).
+SYNTHETIC_CTX_CODES = ["034", "049", "043"]
+
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
 
@@ -146,6 +150,7 @@ def generate_contracts() -> list[dict]:
                     "contractId": f"CT-{seq:04d}",
                     "customerId": customer_id,
                     "customerName": customer_name,
+                    "ctx": SYNTHETIC_CTX_CODES[cust_seq % len(SYNTHETIC_CTX_CODES)],
                     "region": region_id,
                     "channel": channel,
                     "dealerId": dealer_id,
@@ -213,12 +218,23 @@ def load_contracts() -> list[dict]:
     return generate_contracts()
 
 
+_ANY = object()  # sentinel: "don't filter by ctx" (None is a real value: contracts with no CTX)
+
+
+def customer_summary_key(customer_id, ctx) -> str:
+    """Customer summaries are cached per (customer, CTX), never per customer
+    alone: a customer with contracts in two areas would otherwise get ONE
+    summary narrating both, shown to a manager who may only see one."""
+    return f"{customer_id}|{ctx or ''}"
+
+
 class AppState:
     """Single in-process store. Not thread-safe by design - this runs on
     asyncio's single event loop, which is sufficient for a POC."""
 
     def __init__(self):
         self.contracts: list[dict] = load_contracts()
+        self._index()
         self.trace: list[dict] = []
         self.batch_status: dict = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
@@ -226,16 +242,47 @@ class AppState:
 
     def reset(self):
         self.contracts = load_contracts()
+        self._index()
         self.trace = []
         self.batch_status = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries = {}
         self.customer_summaries = {}
 
-    def contract_by_id(self, contract_id: str) -> Optional[dict]:
-        return next((c for c in self.contracts if c["contractId"] == contract_id), None)
+    def _index(self) -> None:
+        """Rebuilt whenever contracts change, so scope checks (called on
+        every request, and once per trace row) are dictionary lookups
+        instead of scans over the whole book."""
+        self._by_id = {c["contractId"]: c for c in self.contracts}
+        self._by_ctx: dict = {}
+        for c in self.contracts:
+            self._by_ctx.setdefault(c.get("ctx"), []).append(c)
 
-    def contracts_for_customer(self, customer_id: str) -> list[dict]:
-        return [c for c in self.contracts if c["customerId"] == customer_id]
+    def contract_by_id(self, contract_id: str) -> Optional[dict]:
+        return self._by_id.get(contract_id)
+
+    def ctx_of(self, contract_id: str) -> Optional[str]:
+        c = self._by_id.get(contract_id)
+        return c.get("ctx") if c else None
+
+    def contracts_in(self, ctxs) -> list[dict]:
+        """ctxs=None -> every contract (admin). Otherwise only contracts whose
+        CTX is in the given set; contracts with no CTX are never included."""
+        if ctxs is None:
+            return self.contracts
+        return [c for code in sorted(ctxs) for c in self._by_ctx.get(code, [])]
+
+    def ctx_codes(self) -> list[str]:
+        return sorted(code for code in self._by_ctx if code)
+
+    def ctx_counts(self) -> dict:
+        return {code: len(rows) for code, rows in self._by_ctx.items() if code}
+
+    def count_without_ctx(self) -> int:
+        return len(self._by_ctx.get(None, []))
+
+    def contracts_for_customer(self, customer_id: str, ctx=_ANY) -> list[dict]:
+        return [c for c in self.contracts
+                if c["customerId"] == customer_id and (ctx is _ANY or c.get("ctx") == ctx)]
 
     def latest_trace_for(self, contract_id: str) -> Optional[dict]:
         for record in reversed(self.trace):

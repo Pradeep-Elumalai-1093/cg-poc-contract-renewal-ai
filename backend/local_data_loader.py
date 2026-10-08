@@ -16,15 +16,49 @@ Column names below match the real exports already reviewed
 invoice_of_234276.csv). If your actual export uses different column
 names, update the *_COL constants at the top rather than the logic below.
 """
+import logging
 import os
+import re
 from datetime import date, datetime
 
 import pandas as pd
+
+log = logging.getLogger("local_data_loader")
 
 DATA_DIR = os.environ.get("DATA_DIR", "../data")
 CONTRACTS_FILE = os.environ.get("CONTRACTS_FILE", "contracts.csv")
 CLAIMS_FILE = os.environ.get("CLAIMS_FILE", "claims.csv")
 INVOICES_FILE = os.environ.get("INVOICES_FILE", "invoices.csv")
+
+# The CTX (3-digit area code) comes from the ACCOUNT table and is carried on
+# the contract table. The exact column name isn't confirmed, so set CTX_COLUMN
+# in .env if yours differs; otherwise these common spellings are tried in order.
+CTX_COLUMN_CANDIDATES = [c for c in (os.environ.get("CTX_COLUMN"), "CTX", "CTXID", "CTX_ID", "CTX_CODE") if c]
+_CTX_RE = re.compile(r"^\d{1,3}$", re.ASCII)
+
+
+def _normalize_ctx(value) -> str | None:
+    """Area codes are 3-digit strings. A spreadsheet/pandas read turns "034"
+    into the integer 34 (or the float 34.0 when the column has blanks), so
+    restore the leading zeros. Anything that isn't a 1-3 digit number is
+    treated as 'no CTX' rather than guessed at."""
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value).strip()
+    return text.zfill(3) if _CTX_RE.match(text) else None
+
+
+def _to_id(value) -> str | None:
+    """IDs arrive as ints (or floats like 83121.0 when a column has blanks),
+    but the API models declare them as strings and the frontend echoes them
+    back - one canonical string form keeps every lookup consistent."""
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value)
 
 
 def _clean_row(row: pd.Series) -> dict:
@@ -129,7 +163,7 @@ def load_contracts_from_local() -> list[dict]:
         claims_df = _read_csv_with_fallback_encoding(claims_path)
         for _, raw_row in claims_df.iterrows():
             row = _clean_row(raw_row)
-            cid = row.get("CONTRACTID")
+            cid = _to_id(row.get("CONTRACTID"))
             if cid is None:
                 continue
             claim_date = row.get("CLAIMDATE")
@@ -153,16 +187,24 @@ def load_contracts_from_local() -> list[dict]:
             latest_amount = _clean_row(ordered.iloc[-1]).get("AMOUNT")
             if first_amount is None or latest_amount is None:
                 continue  # no usable amount to build a price trend from
-            price_trend_by_contract[cid] = {
+            price_trend_by_contract[_to_id(cid)] = {
                 "first_amount": float(first_amount),
                 "latest_amount": float(latest_amount),
                 "price_increase_pct": round((latest_amount - first_amount) / first_amount, 3) if first_amount else None,
             }
 
+    ctx_column = next((c for c in CTX_COLUMN_CANDIDATES if c in contracts_df.columns), None)
+    if ctx_column is None:
+        log.warning(
+            "No CTX column found in %s (tried %s). Every contract will have ctx=None and be visible to "
+            "admins only - set CTX_COLUMN in .env if the column has a different name.",
+            contracts_path, ", ".join(CTX_COLUMN_CANDIDATES),
+        )
+
     contracts = []
     for _, raw_row in contracts_df.iterrows():
         row = _clean_row(raw_row)
-        contract_id = row["CONTRACTID"]
+        contract_id = _to_id(row["CONTRACTID"])
         claims = claims_by_contract.get(contract_id, [])
 
         trend = price_trend_by_contract.get(contract_id)
@@ -190,7 +232,8 @@ def load_contracts_from_local() -> list[dict]:
 
         contracts.append({
             "contractId": contract_id,
-            "customerId": row.get("CUSTOMERID"),
+            "customerId": _to_id(row.get("CUSTOMERID")),
+            "ctx": _normalize_ctx(row.get(ctx_column)) if ctx_column else None,
             "customerName": row.get("COMPANY") or row.get("ACCOUNT") or "Unknown",
             "region": _map_region(row.get("COUNTRYID")),
             "channel": "Direct" if bool(row.get("IS_DIRECT_CONTRACT")) else "Dealer",
@@ -219,4 +262,8 @@ def load_contracts_from_local() -> list[dict]:
             "lostReasons": None,
         })
 
+    bad = sum(1 for c in contracts if c["ctx"] is None)
+    if ctx_column and bad:
+        log.warning("%d of %d contracts have a blank or invalid %s value - visible to admins only.",
+                    bad, len(contracts), ctx_column)
     return contracts

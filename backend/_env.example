@@ -1,0 +1,66 @@
+# Choose "anthropic", "openrouter", or "vllm"
+LLM_PROVIDER=openrouter
+
+# --- Anthropic direct (only needed if LLM_PROVIDER=anthropic) ---
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# --- OpenRouter (only needed if LLM_PROVIDER=openrouter) ---
+# Get a key at https://openrouter.ai/keys
+OPENROUTER_API_KEY=sk-or-your-key-here
+# Model slug as listed on openrouter.ai/models - this default routes to Claude Sonnet 4.6
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
+# Optional - OpenRouter uses these for their public rankings/analytics, safe to leave blank
+OPENROUTER_SITE_URL=
+OPENROUTER_SITE_NAME=
+
+# --- vLLM (only needed if LLM_PROVIDER=vllm) ---
+VLLM_BASE_URL=http://localhost:8000
+VLLM_MODEL=meta-llama/Llama-3.1-8B-Instruct
+VLLM_API_KEY=
+
+# =====================================================================
+# App / authentication
+# =====================================================================
+# "development" (default) or "production". Production refuses AUTH_MODE=dev
+# and requires a real SESSION_SECRET.
+ENV=development
+
+# dev = local login that accepts any email (no Microsoft keys needed) - never in production
+# sso = Microsoft Entra ID sign-in (needs the MS_* values below). This is also what
+#       you get if AUTH_MODE is left unset, so a missing config fails closed.
+AUTH_MODE=dev
+
+# Signs the session cookie. Required in production (32+ random characters):
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Left blank in development a random one is used, so sessions end on restart.
+SESSION_SECRET=
+SESSION_MAX_AGE_HOURS=12
+
+# Comma-separated emails that become the first admin(s). Only honoured while
+# no active admin exists yet - it can't be used to take over a live install.
+BOOTSTRAP_ADMIN_EMAILS=you@company.com
+
+# Users, access assignments and the audit log. SQLite by default; use
+# Postgres for anything shared, e.g. postgresql+psycopg://user:pass@host/db
+DATABASE_URL=sqlite:///./app.db
+
+# --- Microsoft SSO (only needed if AUTH_MODE=sso) ---
+MS_TENANT_ID=
+MS_CLIENT_ID=
+MS_CLIENT_SECRET=
+# Must match the redirect URI registered in Entra exactly, e.g.
+#   https://app.example.com/api/auth/callback
+# With the Vite dev proxy it is the dev server's origin:
+#   http://localhost:5173/api/auth/callback
+MS_REDIRECT_URI=
+# Where the browser lands after a successful sign-in
+APP_URL=/
+# Optional: override the discovery URL (sovereign clouds, or a test identity provider)
+OIDC_METADATA_URL=
+
+# =====================================================================
+# Data
+# =====================================================================
+# Column on the contract table holding the 3-digit CTX (area code). Leave
+# blank to try CTX, CTXID, CTX_ID, CTX_CODE in that order.
+CTX_COLUMN=CTX

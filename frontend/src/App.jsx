@@ -817,7 +817,7 @@ function AgentInspector({ attempts }) {
    All data manipulation and AI orchestration now happens in FastAPI.
    This component only fetches, displays, and triggers actions.
 ----------------------------------------------------------------*/
-export default function ContractRenewalPOC() {
+function ContractRenewalPOC({ user, onLogout }) {
   const [contracts, setContracts] = useState([]);
   const [trace, setTrace] = useState([]);
   const [metrics, setMetrics] = useState({ firstPassRate: 0, avgRetries: "0.00", escalationRate: 0, avgLatency: 0, totalCost: 0, responseRate: null, totalRuns: 0 });
@@ -884,13 +884,17 @@ export default function ContractRenewalPOC() {
     }
   };
 
-  const runCustomerSummary = async (customerId) => {
-    setCustomerSummaries((prev) => ({ ...prev, [customerId]: { status: "loading" } }));
+  // Summaries are cached server-side per (customer, CTX) so one area's manager
+  // never sees a summary that narrates another area's contracts.
+  const summaryKey = (customerId, ctx) => `${customerId}|${ctx || ""}`;
+  const runCustomerSummary = async (customerId, ctx) => {
+    const key = summaryKey(customerId, ctx);
+    setCustomerSummaries((prev) => ({ ...prev, [key]: { status: "loading" } }));
     try {
-      const record = await api.runCustomerSummary(customerId);
-      setCustomerSummaries((prev) => ({ ...prev, [customerId]: record }));
+      const record = await api.runCustomerSummary(customerId, ctx);
+      setCustomerSummaries((prev) => ({ ...prev, [key]: record }));
     } catch (e) {
-      setCustomerSummaries((prev) => ({ ...prev, [customerId]: { status: "error", error: String(e.message || e) } }));
+      setCustomerSummaries((prev) => ({ ...prev, [key]: { status: "error", error: String(e.message || e) } }));
     }
   };
 
@@ -1413,18 +1417,34 @@ export default function ContractRenewalPOC() {
         </div>
 
         <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11.5, color: T.inkMuted, marginBottom: 8, display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
+            <span title={user.email} style={{ fontWeight: 600, color: T.ink }}>{user.name || user.email}</span>
+            <span style={{ color: T.inkFaint }}>·</span>
+            <span data-testid="user-areas">
+              {user.allCtx ? "All areas" : user.ctxs.map((c) => (c.name === c.code ? c.code : `${c.code} ${c.name}`)).join(", ")}
+            </span>
+            <button
+              onClick={onLogout}
+              style={{ border: "none", background: "none", color: T.info, fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }}
+            >
+              Sign out
+            </button>
+          </div>
+          {/* The batch runs the LLM pipeline across every area, so it is admin-only until it moves to its own daily pipeline. */}
+          {user.role === "admin" && (
           <button
             onClick={runBatch}
             disabled={running || dueContracts.length === 0}
             style={{
               display: "flex", alignItems: "center", gap: 8, background: running ? T.inkFaint : T.brand, color: "#fff",
               border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600,
-              cursor: running || dueContracts.length === 0 ? "default" : "pointer",
+              cursor: running || dueContracts.length === 0 ? "default" : "pointer", marginLeft: "auto",
             }}
           >
             <Play size={15} fill="#fff" />
             {running ? `Running ${progress.done}/${progress.total}…` : `Run daily batch (${dueContracts.length} due)`}
           </button>
+          )}
           {apiError && <div style={{ fontSize: 11.5, color: T.risk, marginTop: 6, maxWidth: 260 }}>{apiError}</div>}
         </div>
           
@@ -1436,8 +1456,13 @@ export default function ContractRenewalPOC() {
         <button className={`tabbtn ${tab === "renewal-prioritization" ? "active" : ""}`} onClick={() => setTab("renewal-prioritization")}>Renewal Prioritization</button>
         <button className={`tabbtn ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
         <button className={`tabbtn ${tab === "technical-details" ? "active" : ""}`} onClick={() => setTab("technical-details")}>Technical Details</button>
+        {user.role === "admin" && (
+          <button className={`tabbtn ${tab === "access" ? "active" : ""}`} onClick={() => setTab("access")}>Access</button>
+        )}
         {/* <button className={`tabbtn ${tab === "trace" ? "active" : ""}`} onClick={() => setTab("trace")}>Trace &amp; Agent Metrics</button> */}
       </div>
+
+      {tab === "access" && user.role === "admin" && <AccessPage currentUserId={user.id} />}
 
       {tab === "overview" && (
         <div style={{ maxWidth: "90%"}}>
@@ -2093,8 +2118,8 @@ export default function ContractRenewalPOC() {
             {/* Globally available regardless of which drawer tab is active */}
             <CachedAgentCard
               title="Customer Summary (AI Generated)"
-              record={customerSummaries[selectedContract.customerId]}
-              onGenerate={() => runCustomerSummary(selectedContract.customerId)}
+              record={customerSummaries[summaryKey(selectedContract.customerId, selectedContract.ctx)]}
+              onGenerate={() => runCustomerSummary(selectedContract.customerId, selectedContract.ctx)}
               loadingLabel="Reading full customer relationship"
               placeholderLabel="Synthesizes this customer's entire portfolio (all contracts) into one relationship summary. Generated automatically during the next batch run if you skip this."
             />
@@ -2234,4 +2259,363 @@ export default function ContractRenewalPOC() {
       </div>
     </div>
   );
+}
+
+
+/* ---------------------------------------------------------------
+   AUTH GATE + ACCESS ADMIN
+   The gate picks a screen from /api/auth/me alone. The server is the
+   authority on who someone is and what they may see, so nothing here
+   stores or trusts a role on the client - it only decides what to draw.
+----------------------------------------------------------------*/
+const STATUS_STYLE = {
+  pending: { color: T.amber, bg: T.amberBg },
+  active: { color: T.safe, bg: T.safeBg },
+  disabled: { color: T.inkFaint, bg: T.surfaceSunken },
+};
+
+const smallBtn = {
+  border: `1px solid ${T.border}`, background: T.surface, color: T.ink, borderRadius: 6,
+  padding: "5px 9px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+};
+const primaryBtn = {
+  width: "100%", background: T.brand, color: "#fff", border: "none", borderRadius: 8,
+  padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer",
+};
+const sectionLabel = {
+  fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: T.inkFaint, marginBottom: 6,
+};
+
+function CenteredScreen({ children }) {
+  return (
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: T.bg, color: T.ink, minHeight: "100vh" }}>
+      <div style={{ height: 4, background: T.brand }} />
+      <div style={{ display: "flex", justifyContent: "center", padding: "12vh 24px 24px" }}>
+        <Card style={{ maxWidth: 420, width: "100%", padding: 28 }}>
+          <div style={{ fontSize: 11.5, color: T.brand, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Carrier Global</div>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: "2px 0 18px" }}>Proactive Contract Renewal</h1>
+          {children}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ config, onDevLogin, error }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!email.trim() || busy) return;
+    setBusy(true);
+    try { await onDevLogin(email.trim()); } finally { setBusy(false); }
+  };
+  return (
+    <CenteredScreen>
+      {config.mode === "sso" ? (
+        <button onClick={() => { window.location.href = config.loginUrl; }} style={primaryBtn}>
+          Sign in with Microsoft
+        </button>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: T.amber, background: T.amberBg, borderRadius: 6, padding: "7px 10px", marginBottom: 12 }}>
+            Development sign-in: any email is accepted. This is switched off in production.
+          </div>
+          <input
+            type="email" value={email} placeholder="you@company.com" autoFocus
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            style={{ width: "100%", padding: "9px 11px", fontSize: 13.5, border: `1px solid ${T.borderStrong}`, borderRadius: 7, marginBottom: 10 }}
+          />
+          <button onClick={submit} disabled={busy || !email.trim()} style={{ ...primaryBtn, opacity: busy || !email.trim() ? 0.6 : 1 }}>
+            Continue
+          </button>
+        </>
+      )}
+      {error && <div style={{ color: T.risk, fontSize: 12, marginTop: 10 }}>{error}</div>}
+    </CenteredScreen>
+  );
+}
+
+function WaitingScreen({ user, status, onRecheck, onLogout }) {
+  return (
+    <CenteredScreen>
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+        {status === "disabled" ? "Account disabled" : "Waiting for access"}
+      </div>
+      <div style={{ fontSize: 13, color: T.inkMuted, lineHeight: 1.5, marginBottom: 16 }}>
+        {status === "disabled"
+          ? <>Access for <b>{user.email}</b> has been turned off. Contact an administrator if you think this is a mistake.</>
+          : <>You're signed in as <b>{user.email}</b>, but no area (CTX) has been assigned to you yet. An administrator needs to grant access before you can see any contracts.</>}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {status !== "disabled" && <button onClick={onRecheck} style={{ ...smallBtn, padding: "8px 14px" }}>Check again</button>}
+        <button onClick={onLogout} style={{ ...smallBtn, padding: "8px 14px" }}>Sign out</button>
+      </div>
+    </CenteredScreen>
+  );
+}
+
+const ctxLabel = (c) => (c.name === c.code ? c.code : `${c.code} · ${c.name}`);
+
+// Not MultiSelect: its empty state reads "All <label>", which for access
+// assignment would be actively misleading (no areas = NO access, not all).
+function CtxPicker({ ctxs, value, onApply, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const ref = useRef(null);
+  const valueKey = [...value].sort().join(",");
+
+  useEffect(() => { setDraft(value); }, [valueKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  const changed = [...draft].sort().join(",") !== valueKey;
+  const toggle = (code) => setDraft((d) => (d.includes(code) ? d.filter((x) => x !== code) : [...d, code]));
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <button
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        style={{ ...smallBtn, display: "flex", alignItems: "center", gap: 5, color: value.length ? T.ink : T.risk }}
+      >
+        {value.length ? value.join(", ") : "No areas"}
+        <ChevronDown size={12} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, background: T.surface, border: `1px solid ${T.border}`,
+          borderRadius: 8, boxShadow: "0 6px 18px rgba(22,27,34,0.12)", padding: 6, zIndex: 30, minWidth: 230,
+        }}>
+          {ctxs.length === 0 && <div style={{ padding: 8, fontSize: 12, color: T.inkFaint }}>No areas registered yet.</div>}
+          {ctxs.map((c) => (
+            <label key={c.code} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", fontSize: 12.5, cursor: "pointer" }}>
+              <input type="checkbox" checked={draft.includes(c.code)} onChange={() => toggle(c.code)} />
+              {ctxLabel(c)}
+            </label>
+          ))}
+          <div style={{ display: "flex", gap: 6, marginTop: 6, padding: "0 2px" }}>
+            <button
+              disabled={!changed}
+              onClick={() => { onApply(draft); setOpen(false); }}
+              style={{ ...smallBtn, background: changed ? T.brand : T.surfaceSunken, color: changed ? "#fff" : T.inkFaint, borderColor: changed ? T.brand : T.border }}
+            >
+              Apply
+            </button>
+            <button onClick={() => { setDraft(value); setOpen(false); }} style={smallBtn}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CtxNameRow({ ctx, onRename }) {
+  const [name, setName] = useState(ctx.name);
+  useEffect(() => { setName(ctx.name); }, [ctx.name]);
+  const commit = () => { if (name.trim() && name.trim() !== ctx.name) onRename(ctx.code, name.trim()); else setName(ctx.name); };
+  return (
+    <tr>
+      <td style={{ fontFamily: "ui-monospace, monospace", fontWeight: 600 }}>{ctx.code}</td>
+      <td>
+        <input
+          value={name} onChange={(e) => setName(e.target.value)} onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          style={{ padding: "5px 8px", fontSize: 13, border: `1px solid ${T.border}`, borderRadius: 6, width: 220 }}
+        />
+      </td>
+      <td style={{ color: T.inkMuted }}>{ctx.contractCount.toLocaleString()}</td>
+    </tr>
+  );
+}
+
+function describeAudit(a) {
+  const d = a.detail || {};
+  const list = (v) => (v && v.length ? v.join(", ") : "none");
+  switch (a.action) {
+    case "user.ctx_assigned": return `${d.email}: ${list(d.before)} → ${list(d.after)}`;
+    case "user.role_changed": return `${d.email}: ${d.role?.[0]} → ${d.role?.[1]}`;
+    case "ctx.renamed": return `${a.ctxCode}: ${d.name?.[0]} → ${d.name?.[1]}`;
+    default: return d.email || "";
+  }
+}
+
+function AccessPage({ currentUserId }) {
+  const [users, setUsers] = useState(null);
+  const [ctxInfo, setCtxInfo] = useState({ ctxs: [], contractsWithoutCtx: 0 });
+  const [audit, setAudit] = useState([]);
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [u, c, a] = await Promise.all([api.getAdminUsers(), api.getAdminCtx(), api.getAdminAudit(20)]);
+      setUsers(u); setCtxInfo(c); setAudit(a); setError(null);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (userId, fn) => {
+    setBusyId(userId);
+    try { await fn(); await load(); } catch (e) { setError(String(e.message || e)); } finally { setBusyId(null); }
+  };
+  const renameCtx = async (code, name) => {
+    try { await api.renameCtx(code, name); await load(); } catch (e) { setError(String(e.message || e)); }
+  };
+
+  const pending = (users || []).filter((u) => u.status === "pending").length;
+
+  return (
+    <div>
+      {error && (
+        <div style={{ fontSize: 12.5, color: T.risk, background: T.riskBg, borderRadius: 8, padding: "9px 12px", marginBottom: 14 }}>{error}</div>
+      )}
+      {ctxInfo.contractsWithoutCtx > 0 && (
+        <div style={{ fontSize: 12.5, color: T.amber, background: T.amberBg, borderRadius: 8, padding: "9px 12px", marginBottom: 14 }}>
+          {ctxInfo.contractsWithoutCtx.toLocaleString()} contract{ctxInfo.contractsWithoutCtx === 1 ? "" : "s"} have no CTX value, so only admins can see them.
+          Check that the contract data includes a CTX column.
+        </div>
+      )}
+
+      <div style={sectionLabel}>
+        Users {pending > 0 && <span style={{ color: T.amber }}>· {pending} waiting for access</span>}
+      </div>
+      <Card style={{ padding: 0, marginBottom: 22 }}>
+        {users === null ? (
+          <div style={{ padding: 16, fontSize: 12.5, color: T.inkFaint }}>Loading…</div>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>User</th><th>Role</th><th>Status</th><th>Areas (CTX)</th><th>Last sign-in</th><th /></tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id}>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{u.name || u.email}{u.id === currentUserId && <span style={{ color: T.inkFaint, fontWeight: 400 }}> (you)</span>}</div>
+                    <div style={{ fontSize: 11.5, color: T.inkMuted }}>{u.email}</div>
+                  </td>
+                  <td>{u.role === "admin" ? <Badge text="Admin" color={T.brand} bg={T.brandBg} /> : "User"}</td>
+                  <td><Badge text={u.status} color={STATUS_STYLE[u.status].color} bg={STATUS_STYLE[u.status].bg} /></td>
+                  <td>
+                    {u.role === "admin"
+                      ? <span style={{ color: T.inkMuted, fontSize: 12.5 }}>All areas</span>
+                      : <CtxPicker
+                          ctxs={ctxInfo.ctxs} value={u.ctxs} disabled={busyId === u.id || u.status === "disabled"}
+                          onApply={(codes) => act(u.id, () => api.setUserCtx(u.id, codes))}
+                        />}
+                  </td>
+                  <td style={{ color: T.inkMuted, fontSize: 12 }}>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : "—"}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button
+                      style={smallBtn} disabled={busyId === u.id}
+                      onClick={() => act(u.id, () => api.setUserRole(u.id, u.role === "admin" ? "user" : "admin"))}
+                    >
+                      {u.role === "admin" ? "Remove admin" : "Make admin"}
+                    </button>{" "}
+                    <button
+                      style={smallBtn} disabled={busyId === u.id}
+                      onClick={() => act(u.id, () => api.setUserDisabled(u.id, u.status !== "disabled"))}
+                    >
+                      {u.status === "disabled" ? "Enable" : "Disable"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      <div style={sectionLabel}>Areas (CTX)</div>
+      <Card style={{ padding: 0, marginBottom: 22 }}>
+        <table>
+          <thead><tr><th>Code</th><th>Name</th><th>Contracts</th></tr></thead>
+          <tbody>
+            {ctxInfo.ctxs.map((c) => <CtxNameRow key={c.code} ctx={c} onRename={renameCtx} />)}
+            {ctxInfo.ctxs.length === 0 && <tr><td colSpan={3} style={{ color: T.inkFaint }}>No CTX codes found in the contract data yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+
+      <div style={sectionLabel}>Recent activity</div>
+      <Card style={{ padding: 0 }}>
+        <table>
+          <thead><tr><th>When</th><th>By</th><th>Action</th><th>Detail</th></tr></thead>
+          <tbody>
+            {audit.map((a) => (
+              <tr key={a.id}>
+                <td style={{ color: T.inkMuted, fontSize: 12, whiteSpace: "nowrap" }}>{new Date(a.at).toLocaleString()}</td>
+                <td style={{ fontSize: 12.5 }}>{a.actorEmail || "—"}</td>
+                <td style={{ fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}>{a.action}</td>
+                <td style={{ fontSize: 12.5, color: T.inkMuted }}>{describeAudit(a)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+export default function App() {
+  const [phase, setPhase] = useState("loading"); // loading | login | pending | disabled | ready | error
+  const [config, setConfig] = useState(null);
+  const [user, setUser] = useState(null);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setConfig(await api.getAuthConfig());
+      try {
+        const me = await api.getMe();
+        setUser(me);
+        setPhase(me.status === "active" ? "ready" : me.status);
+      } catch (e) {
+        if (e.status !== 401) throw e;
+        setUser(null);
+        setPhase("login");
+      }
+    } catch (e) {
+      setError(String(e.message || e));
+      setPhase("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    window.addEventListener("auth:changed", load); // fired by api.js on a 401 / access change
+    return () => window.removeEventListener("auth:changed", load);
+  }, [load]);
+
+  const logout = async () => {
+    try { await api.logout(); } catch (e) { /* the session is gone either way */ }
+    setError(null);
+    await load();
+  };
+  const devLogin = async (email) => {
+    try { await api.devLogin(email); setError(null); await load(); } catch (e) { setError(String(e.message || e)); }
+  };
+
+  if (phase === "loading") return <CenteredScreen><div style={{ color: T.inkMuted, fontSize: 13 }}>Loading…</div></CenteredScreen>;
+  if (phase === "error") {
+    return (
+      <CenteredScreen>
+        <div style={{ color: T.risk, fontSize: 13, marginBottom: 12 }}>{error}</div>
+        <button onClick={() => { setPhase("loading"); load(); }} style={{ ...smallBtn, padding: "8px 14px" }}>Retry</button>
+      </CenteredScreen>
+    );
+  }
+  if (phase === "login") return <LoginScreen config={config} onDevLogin={devLogin} error={error} />;
+  if (phase === "pending" || phase === "disabled") {
+    return <WaitingScreen user={user} status={phase} onRecheck={load} onLogout={logout} />;
+  }
+  // key={user.id}: signing in as someone else remounts the app, so the previous
+  // user's loaded contracts and summaries can't linger in component state.
+  return <ContractRenewalPOC key={user.id} user={user} onLogout={logout} />;
 }

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -8,24 +9,61 @@ from dotenv import load_dotenv
 from utils.CustomJSONEncoder import CustomJSONEncoder
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
-from state import state, CAMPAIGN_TAXONOMY, REGIONS, BUCKETS
+import admin
+import auth
+import db
+from auth import Scope, active_user, admin_user, get_scope
+from state import state, CAMPAIGN_TAXONOMY, REGIONS, BUCKETS, customer_summary_key
 from rules import MODEL_INFO
 
-app = FastAPI(title="Proactive Contract Renewal")
+
+def _sync_ctx() -> None:
+    """Registers any CTX code present in the loaded contracts that the ctx
+    table hasn't seen yet, so admins can assign it from the Access page."""
+    with db.SessionLocal() as session:
+        db.sync_ctx_codes(session, state.ctx_codes())
+        session.commit()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    auth.validate_config()  # refuses to start insecurely (e.g. dev auth in production)
+    db.init_db()
+    _sync_ctx()
+    yield
+
+
+app = FastAPI(title="Proactive Contract Renewal", lifespan=lifespan)
+
+# Signed-cookie session holding only the user id (see auth.py). Added before
+# CORS so CORS stays the outermost layer and still decorates error responses.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=auth.SESSION_SECRET,
+    session_cookie="cr_session",
+    same_site="lax",  # blocks cross-site POSTs from carrying the cookie (CSRF), allows the SSO redirect back
+    https_only=auth.ENV == "production",
+    max_age=auth.SESSION_MAX_AGE,
+)
 
 # Only needed while running the Vite dev server separately (port 5173).
 # When the frontend is built and served from this same process, CORS is moot.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth.router)
+app.include_router(admin.router)
 
 
 class FeedbackIn(BaseModel):
@@ -45,22 +83,45 @@ class ContractIdIn(BaseModel):
 
 class CustomerIdIn(BaseModel):
     customerId: str
+    ctx: str | None = None  # a customer summary is per (customer, CTX) - see state.customer_summary_key
+
+
+# --- scoping helpers ----------------------------------------------------------
+# Every read below goes through the caller's Scope (see auth.get_scope), derived
+# from the session - never from a request parameter. Records outside the scope
+# answer 404, not 403, so another area's ids can't be probed.
+
+def _scoped_trace(scope: Scope) -> list[dict]:
+    if scope.ctxs is None:
+        return state.trace
+    return [r for r in state.trace if scope.allows(state.ctx_of(r["contractId"]))]
+
+
+def _owned_contract(contract_id: str, scope: Scope) -> dict:
+    contract = state.contract_by_id(contract_id)
+    if not contract or not scope.allows(contract.get("ctx")):
+        raise HTTPException(status_code=404, detail="Contract not found.")
+    return contract
+
+
+def _ctx_from_summary_key(key: str) -> str | None:
+    return key.rsplit("|", 1)[-1] or None
 
 
 @app.get("/api/contracts")
-def get_contracts():
-    return state.contracts
+def get_contracts(scope: Scope = Depends(get_scope)):
+    return state.contracts_in(scope.ctxs)
 
 
 @app.get("/api/trace")
-def get_trace():
-    return state.trace
+def get_trace(scope: Scope = Depends(get_scope)):
+    return _scoped_trace(scope)
 
 
 @app.get("/api/campaigns")
-def get_campaigns():
+def get_campaigns(scope: Scope = Depends(get_scope)):
     summary = {t["name"]: {"assigned": 0, "engaged": 0, "declined": 0, "noResponse": 0} for t in CAMPAIGN_TAXONOMY}
-    for record in state.trace:
+    for record in _scoped_trace(scope):
         name = (record.get("recommendation") or {}).get("campaign")
         if name not in summary:
             continue
@@ -76,8 +137,8 @@ def get_campaigns():
 
 
 @app.get("/api/metrics")
-def get_metrics():
-    runs = state.trace
+def get_metrics(scope: Scope = Depends(get_scope)):
+    runs = _scoped_trace(scope)
     n = len(runs) or 1
     first_pass = sum(1 for r in runs if r["retryCount"] == 0 and r["pass"])
     avg_retries = sum(r["retryCount"] for r in runs) / n
@@ -99,12 +160,12 @@ def get_metrics():
 
 
 @app.get("/api/batch/status")
-def get_batch_status():
+def get_batch_status(_: auth.User = Depends(admin_user)):
     return state.batch_status
 
 
 @app.post("/api/batch/run")
-async def run_batch():
+async def run_batch(_: auth.User = Depends(admin_user)):
     if state.batch_status["running"]:
         raise HTTPException(status_code=409, detail="A batch is already running.")
     due = state.due_contracts()
@@ -145,14 +206,16 @@ async def _ensure_customer_summary(contract: dict) -> str | None:
     from agents import run_customer_summary_agent
 
     customer_id = contract["customerId"]
-    async with _lock_for(_customer_locks, customer_id):
-        existing = state.customer_summaries.get(customer_id)
+    key = customer_summary_key(customer_id, contract.get("ctx"))
+    async with _lock_for(_customer_locks, key):
+        existing = state.customer_summaries.get(key)
         if not existing or existing.get("status") != "done":
-            state.customer_summaries[customer_id] = {"status": "loading"}
-            contracts = state.contracts_for_customer(customer_id)
+            state.customer_summaries[key] = {"status": "loading"}
+            # Only this CTX's contracts feed the summary, so it can't narrate another area's data.
+            contracts = state.contracts_for_customer(customer_id, contract.get("ctx"))
             result = await run_customer_summary_agent(customer_id, contract["customerName"], contracts)
-            state.customer_summaries[customer_id] = result
-    record = state.customer_summaries.get(customer_id)
+            state.customer_summaries[key] = result
+    record = state.customer_summaries.get(key)
     return record["data"] if record and record.get("status") == "done" else None
 
 
@@ -185,9 +248,9 @@ async def _process_batch(due: list[dict]):
 
 
 @app.post("/api/feedback")
-def post_feedback(body: FeedbackIn):
+def post_feedback(body: FeedbackIn, scope: Scope = Depends(get_scope)):
     record = state.latest_trace_for(body.contractId)
-    if not record:
+    if not record or not scope.allows(state.ctx_of(body.contractId)):
         raise HTTPException(status_code=404, detail="No trace record found for this contract yet.")
     if body.outcome is not None:
         record["outcome"] = body.outcome
@@ -197,9 +260,9 @@ def post_feedback(body: FeedbackIn):
 
 
 @app.post("/api/action-status")
-def post_action_status(body: ActionStatusIn):
+def post_action_status(body: ActionStatusIn, scope: Scope = Depends(get_scope)):
     record = state.latest_trace_for(body.contractId)
-    if not record:
+    if not record or not scope.allows(state.ctx_of(body.contractId)):
         raise HTTPException(status_code=404, detail="No trace record found for this contract yet.")
     if body.actionStatus not in ("Action required", "Action done"):
         raise HTTPException(status_code=400, detail="actionStatus must be 'Action required' or 'Action done'.")
@@ -208,13 +271,14 @@ def post_action_status(body: ActionStatusIn):
 
 
 @app.post("/api/reset")
-def reset_state():
+def reset_state(_: auth.User = Depends(admin_user)):
     state.reset()
+    _sync_ctx()  # a reload can introduce CTX codes the ctx table hasn't seen
     return {"reset": True, "contracts": len(state.contracts)}
 
 
 @app.get("/api/model-info")
-def get_model_info():
+def get_model_info(_: auth.User = Depends(active_user)):
     return MODEL_INFO
 
 
@@ -237,27 +301,26 @@ def _aggregate(contracts: list[dict]) -> dict:
 
 
 @app.get("/api/region-summary")
-def get_region_summary():
-    global_summary = _aggregate(state.contracts)
+def get_region_summary(scope: Scope = Depends(get_scope)):
+    visible = state.contracts_in(scope.ctxs)
+    global_summary = _aggregate(visible)
     region_summaries = {}
     for region_id, meta in REGIONS.items():
-        region_contracts = [c for c in state.contracts if c["region"] == region_id]
+        region_contracts = [c for c in visible if c["region"] == region_id]
         region_summaries[region_id] = {"label": meta["label"], "channels": meta["channels"], **_aggregate(region_contracts)}
     return {"global": global_summary, "regions": region_summaries}
 
 
 @app.get("/api/ticket-summaries")
-def get_ticket_summaries():
-    return state.ticket_summaries
+def get_ticket_summaries(scope: Scope = Depends(get_scope)):
+    return {cid: rec for cid, rec in state.ticket_summaries.items() if scope.allows(state.ctx_of(cid))}
 
 
 @app.post("/api/ticket-summaries/run")
-async def run_ticket_summary(body: ContractIdIn):
+async def run_ticket_summary(body: ContractIdIn, scope: Scope = Depends(get_scope)):
     from agents import run_ticket_summary_agent
 
-    contract = state.contract_by_id(body.contractId)
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found.")
+    contract = _owned_contract(body.contractId, scope)
     state.ticket_summaries[body.contractId] = {"status": "loading"}
     result = await run_ticket_summary_agent(contract)
     state.ticket_summaries[body.contractId] = result
@@ -265,26 +328,29 @@ async def run_ticket_summary(body: ContractIdIn):
 
 
 @app.get("/api/customer-summaries")
-def get_customer_summaries():
-    return state.customer_summaries
+def get_customer_summaries(scope: Scope = Depends(get_scope)):
+    # Keyed "<customerId>|<ctx>" - the UI looks a summary up by the selected contract's CTX.
+    return {k: rec for k, rec in state.customer_summaries.items() if scope.allows(_ctx_from_summary_key(k))}
 
 
 @app.post("/api/customer-summaries/run")
-async def run_customer_summary(body: CustomerIdIn):
+async def run_customer_summary(body: CustomerIdIn, scope: Scope = Depends(get_scope)):
     from agents import run_customer_summary_agent
 
-    contracts = state.contracts_for_customer(body.customerId)
+    ctx = body.ctx or None
+    contracts = state.contracts_for_customer(body.customerId, ctx) if scope.allows(ctx) else []
     if not contracts:
         raise HTTPException(status_code=404, detail="Customer not found.")
+    key = customer_summary_key(body.customerId, ctx)
     customer_name = contracts[0]["customerName"]
-    state.customer_summaries[body.customerId] = {"status": "loading"}
+    state.customer_summaries[key] = {"status": "loading"}
     result = await run_customer_summary_agent(body.customerId, customer_name, contracts)
-    state.customer_summaries[body.customerId] = result
+    state.customer_summaries[key] = result
     return result
 
 
 @app.get("/api/outcome-by-risk-bucket")
-def get_outcome_by_risk_bucket():
+def get_outcome_by_risk_bucket(scope: Scope = Depends(get_scope)):
     """Live proxy for a backtest: buckets logged campaign outcomes by the
     risk score at the time of the recommendation. This is NOT a validated
     renewal-outcome backtest (we don't have historical renewal ground truth)
@@ -296,7 +362,7 @@ def get_outcome_by_risk_bucket():
     not_engaged = [0] * 5  # Declined + No response
     total_with_outcome = 0
 
-    for record in state.trace:
+    for record in _scoped_trace(scope):
         outcome = record.get("outcome")
         if not outcome:
             continue
