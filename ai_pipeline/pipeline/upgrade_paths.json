@@ -1,0 +1,6 @@
+{
+  "_note": "PLACEHOLDER - carried over from the earlier prototype's product catalog, keyed by MODEL_CATEGORY. Replace with the client's real upgrade paths. A category with no entry means the model is told 'none available' and will not suggest an upsell.",
+  "LCVMT": "Telematics-enabled reefer unit with remote temperature monitoring",
+  "IND": "Higher-SEER rooftop unit replacement",
+  "POWER GENERATION UNIT": "Battery-electric APU upgrade for extended idle-free runtime"
+}
