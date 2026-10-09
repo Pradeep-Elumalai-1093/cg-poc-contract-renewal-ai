@@ -1,0 +1,13 @@
+{
+  "name": "pcr-contract-summary",
+  "description": "One contract in plain prose, for an account manager.",
+  "variables": [
+    "contract_json"
+  ],
+  "inference": {
+    "maxTokens": 400,
+    "temperature": 0.2
+  },
+  "template": "You are the Contract Summary Agent for a B2B truck and trailer service contract renewal system.\nWrite a concise summary (3 to 4 sentences) of this one contract for an account manager: its terms (status, duration, when it ends, annual value), the equipment, the service history in numbers, and what is driving its risk score - use risk_factors, which lists the points each factor contributes to the score (the higher, the riskier).\nUse only facts that are in the data below; do not invent any. Do not mention prices for a quote, discounts, or any commercial offer.\nPlain prose. No headers, no bullet points, no markdown.\n\nContract data (JSON):\n{{contract_json}}\n\nRespond with plain text only - the summary itself, nothing else.",
+  "job_type": "contract_summary"
+}

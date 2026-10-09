@@ -1,0 +1,386 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Carrier contract-renewal AI pipeline. A daily Lambda plans what needs the model and starts Bedrock batch jobs; a second
+  Lambda handles each finished job (writing summaries, or chaining a recommendation through its evaluation and draft passes);
+  a scheduled sweep catches any missed completion event.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: pcr-ai
+    AllowedPattern: "^[a-z][a-z0-9-]{1,30}$"
+    Description: Names every resource (functions, roles, rules) so several environments can live side by side.
+  ArtifactBucket:
+    Type: String
+    Description: Existing bucket holding the packaged code and layer (the notebook uploads them).
+  CodeKey:
+    Type: String
+  LayerKey:
+    Type: String
+  PipelineBucketName:
+    Type: String
+    Description: Bucket for batch inputs and outputs (created here and retained on stack deletion).
+  PgSecretArn:
+    Type: String
+    Description: Secrets Manager secret with the Aurora connection for the restricted ai_writer role (host, port, dbname, username, password).
+  SnowflakeSecretArn:
+    Type: String
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets that can reach Aurora, and Snowflake / AWS APIs (through a NAT gateway or VPC endpoints).
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  SnowflakeContractTable:
+    Type: String
+  SnowflakeClaimsTable:
+    Type: String
+  ModelId:
+    Type: String
+    Description: Bedrock model (or inference profile) id. It must support batch inference in this region.
+  PromptsJson:
+    Type: String
+    Description: 'JSON mapping each job type to its Prompt Management prompt, e.g. {"contract_summary": {"id": "ABC123", "version": "1"}, ...}'
+  DbSchema:
+    Type: String
+    Default: ai_recommendations
+  DailySchedule:
+    Type: String
+    Default: cron(0 3 * * ? *)
+    Description: When the daily planning run starts (UTC).
+  SweepSchedule:
+    Type: String
+    Default: rate(1 hour)
+    Description: >-
+      How often the safety-net sweep asks Bedrock about batches that are still open. Bedrock's finish event is the normal path, so
+      this only sets how long a missed event or a crashed handler waits. Each run opens a database connection, which also keeps an
+      auto-pausing Aurora awake - so don't make it more frequent than you need.
+  MinBatchRecords:
+    Type: Number
+    Default: 100
+    Description: Bedrock's minimum records per batch job; a smaller job is run directly instead.
+  MaxRecordsPerJob:
+    Type: Number
+    Default: 50000
+  AlarmTopicArn:
+    Type: String
+    Default: ""
+    Description: Optional SNS topic that is notified when either Lambda errors.
+
+Conditions:
+  HasAlarmTopic: !Not [!Equals [!Ref AlarmTopicArn, ""]]
+
+Resources:
+  PipelineBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref PipelineBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-batch-files
+            Status: Enabled
+            Prefix: PCR/
+            ExpirationInDays: 90
+
+  # Bedrock assumes this role to read each job's input and write its output.
+  BatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-bedrock-batch"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "aws:SourceArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:model-invocation-job/*"
+      Policies:
+        - PolicyName: batch-io
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${PipelineBucketName}/PCR/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${PipelineBucketName}"
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/*"
+                  - !Sub "arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*"
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      Policies:
+        - PolicyName: pipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${PipelineBucketName}/PCR/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${PipelineBucketName}"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: [!Ref PgSecretArn, !Ref SnowflakeSecretArn]
+              - Effect: Allow
+                Action: [bedrock:CreateModelInvocationJob, bedrock:GetModelInvocationJob]
+                Resource: "*"
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/*"
+                  - !Sub "arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*"
+              - Effect: Allow
+                Action: bedrock:GetPrompt
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:prompt/*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt BatchRole.Arn
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": bedrock.amazonaws.com
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${Prefix}-on-batch-complete"
+
+  # Dependencies built for the Lambda platform (psycopg, snowflake-connector); boto3 comes with the runtime.
+  DependenciesLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "${Prefix}-dependencies"
+      CompatibleRuntimes: [python3.12]
+      CompatibleArchitectures: [x86_64]
+      Content:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref LayerKey
+
+  StartLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${Prefix}-start-batches"
+      RetentionInDays: 90
+
+  CompleteLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${Prefix}-on-batch-complete"
+      RetentionInDays: 90
+
+  StartFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: StartLogGroup
+    Properties:
+      FunctionName: !Sub "${Prefix}-start-batches"
+      Description: Plans the day's AI work and starts the Bedrock batch jobs.
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: lambdas.start_batches.handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 900
+      MemorySize: 2048
+      ReservedConcurrentExecutions: 1
+      Layers: [!Ref DependenciesLayer]
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref CodeKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          BUCKET: !Ref PipelineBucketName
+          INPUT_PREFIX: PCR/AI_Input
+          OUTPUT_PREFIX: PCR/AI_Output
+          BATCH_ROLE_ARN: !GetAtt BatchRole.Arn
+          PG_SECRET_ARN: !Ref PgSecretArn
+          SNOWFLAKE_SECRET_ARN: !Ref SnowflakeSecretArn
+          DB_SCHEMA: !Ref DbSchema
+          SNOWFLAKE_CONTRACT_TABLE: !Ref SnowflakeContractTable
+          SNOWFLAKE_CLAIMS_TABLE: !Ref SnowflakeClaimsTable
+          MODEL_ID: !Ref ModelId
+          PROMPTS: !Ref PromptsJson
+          COMPLETION_FUNCTION: !Sub "${Prefix}-on-batch-complete"
+          MIN_BATCH_RECORDS: !Ref MinBatchRecords
+          MAX_RECORDS_PER_JOB: !Ref MaxRecordsPerJob
+
+  CompleteFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: CompleteLogGroup
+    Properties:
+      FunctionName: !Sub "${Prefix}-on-batch-complete"
+      Description: Handles a finished batch job; also the scheduled sweep and the status report.
+      Runtime: python3.12
+      Architectures: [x86_64]
+      Handler: lambdas.on_batch_complete.handler
+      Role: !GetAtt PipelineRole.Arn
+      Timeout: 900
+      MemorySize: 2048
+      Layers: [!Ref DependenciesLayer]
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref CodeKey
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          BUCKET: !Ref PipelineBucketName
+          INPUT_PREFIX: PCR/AI_Input
+          OUTPUT_PREFIX: PCR/AI_Output
+          BATCH_ROLE_ARN: !GetAtt BatchRole.Arn
+          PG_SECRET_ARN: !Ref PgSecretArn
+          SNOWFLAKE_SECRET_ARN: !Ref SnowflakeSecretArn
+          DB_SCHEMA: !Ref DbSchema
+          SNOWFLAKE_CONTRACT_TABLE: !Ref SnowflakeContractTable
+          SNOWFLAKE_CLAIMS_TABLE: !Ref SnowflakeClaimsTable
+          MODEL_ID: !Ref ModelId
+          PROMPTS: !Ref PromptsJson
+          COMPLETION_FUNCTION: !Sub "${Prefix}-on-batch-complete"
+          MIN_BATCH_RECORDS: !Ref MinBatchRecords
+          MAX_RECORDS_PER_JOB: !Ref MaxRecordsPerJob
+
+  DailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${Prefix}-daily"
+      Description: Starts the daily AI planning run.
+      ScheduleExpression: !Ref DailySchedule
+      State: ENABLED
+      Targets:
+        - Id: start-batches
+          Arn: !GetAtt StartFunction.Arn
+
+  DailyPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StartFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyRule.Arn
+
+  # Bedrock publishes a state-change event when a batch job finishes or fails.
+  BatchStateRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${Prefix}-batch-state"
+      Description: Hands every finished Bedrock batch job to the completion Lambda.
+      EventPattern:
+        source: [aws.bedrock]
+        detail-type: [Batch Inference Job State Change]
+      State: ENABLED
+      Targets:
+        - Id: on-batch-complete
+          Arn: !GetAtt CompleteFunction.Arn
+
+  BatchStatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CompleteFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BatchStateRule.Arn
+
+  # Safety net: asks Bedrock about any batch that has been open a while, so a missed event never strands one.
+  SweepRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${Prefix}-sweep"
+      ScheduleExpression: !Ref SweepSchedule
+      State: ENABLED
+      Targets:
+        - Id: sweep
+          Arn: !GetAtt CompleteFunction.Arn
+          Input: '{"sweep": true}'
+
+  SweepPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CompleteFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SweepRule.Arn
+
+  StartErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmTopic
+    Properties:
+      AlarmName: !Sub "${Prefix}-start-batches-errors"
+      AlarmDescription: The daily planning run failed (it is safe to re-run; the batch log prevents double starts).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref StartFunction
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+  CompleteErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmTopic
+    Properties:
+      AlarmName: !Sub "${Prefix}-on-batch-complete-errors"
+      AlarmDescription: Handling a finished batch failed (the sweep retries it after the claim lease expires).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CompleteFunction
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+Outputs:
+  StartFunctionName:
+    Value: !Ref StartFunction
+  CompleteFunctionName:
+    Value: !Ref CompleteFunction
+  PipelineBucket:
+    Value: !Ref PipelineBucketName
+  BatchRoleArn:
+    Value: !GetAtt BatchRole.Arn
+  DailyRuleName:
+    Value: !Ref DailyRule
+  SweepRuleName:
+    Value: !Ref SweepRule
+  BatchStateRuleName:
+    Value: !Ref BatchStateRule

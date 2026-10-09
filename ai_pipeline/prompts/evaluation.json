@@ -1,0 +1,16 @@
+{
+  "name": "pcr-evaluation",
+  "description": "QA scoring of a recommendation before it reaches a sales rep.",
+  "variables": [
+    "context_json",
+    "options_json",
+    "recommendation_json",
+    "prior_json"
+  ],
+  "inference": {
+    "maxTokens": 400,
+    "temperature": 0.0
+  },
+  "template": "You are a QA evaluator scoring a retention recommendation before it reaches a sales rep.\nScore each criterion from 0 to 10 based on the context and recommendation below.\n- groundedness: does the rationale only reference facts present in the context, with no invented details?\n- policy_compliance: is the action exactly one of the available options, and is execution_owner correct for the channel (Dealer channel: Dealer; Direct channel: Direct Sales Rep)?\n- actionability: concrete enough for a rep to act on today, not vague?\n- non_repetition: does it avoid repeating the prior action if that action's outcome was not positive?\n- tone: professional, no overpromising, no prices or discounts?\n- upsell_relevance: is the upsell suggestion (if any) actually grounded in the context, or a reasonable \"not recommended\" if it does not fit?\n\nContext (JSON):\n{{context_json}}\n\nAvailable retention actions (JSON):\n{{options_json}}\n\nPrior recommendation (JSON, may be empty):\n{{prior_json}}\n\nRecommendation (JSON):\n{{recommendation_json}}\n\nRespond with ONLY valid JSON, no markdown fences, no preamble:\n{\"scores\": {\"groundedness\": <0-10>, \"policy_compliance\": <0-10>, \"actionability\": <0-10>, \"non_repetition\": <0-10>, \"tone\": <0-10>, \"upsell_relevance\": <0-10>}, \"notes\": \"<one short sentence>\"}",
+  "job_type": "evaluation"
+}

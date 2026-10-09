@@ -1,0 +1,98 @@
+# Choose "anthropic", "openrouter", or "vllm"
+LLM_PROVIDER=openrouter
+
+# --- Anthropic direct (only needed if LLM_PROVIDER=anthropic) ---
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# --- OpenRouter (only needed if LLM_PROVIDER=openrouter) ---
+# Get a key at https://openrouter.ai/keys
+OPENROUTER_API_KEY=sk-or-your-key-here
+# Model slug as listed on openrouter.ai/models - this default routes to Claude Sonnet 4.6
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
+# Optional - OpenRouter uses these for their public rankings/analytics, safe to leave blank
+OPENROUTER_SITE_URL=
+OPENROUTER_SITE_NAME=
+
+# --- vLLM (only needed if LLM_PROVIDER=vllm) ---
+VLLM_BASE_URL=http://localhost:8000
+VLLM_MODEL=meta-llama/Llama-3.1-8B-Instruct
+VLLM_API_KEY=
+
+# =====================================================================
+# App / authentication
+# =====================================================================
+# "development" (default) or "production". Production refuses AUTH_MODE=dev
+# and requires a real SESSION_SECRET.
+ENV=development
+
+# dev = local login that accepts any email (no Microsoft keys needed) - never in production
+# sso = Microsoft Entra ID sign-in (needs the MS_* values below). This is also what
+#       you get if AUTH_MODE is left unset, so a missing config fails closed.
+AUTH_MODE=dev
+
+# Signs the session cookie. Required in production (32+ random characters):
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Left blank in development a random one is used, so sessions end on restart.
+SESSION_SECRET=
+SESSION_MAX_AGE_HOURS=12
+
+# Comma-separated emails that become the first admin(s). Only honoured while
+# no active admin exists yet - it can't be used to take over a live install.
+BOOTSTRAP_ADMIN_EMAILS=you@company.com
+
+# PostgreSQL 18, database uda_1325 (start one locally with `docker compose up -d db`).
+# Create/upgrade the tables with `alembic upgrade head` - the app refuses to start otherwise.
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/uda_1325
+# Schemas inside that database. DB_SCHEMA holds app configuration (users, access, audit)
+# AND the AI result tables the AWS job writes; DB_SCHEMA_DATA holds the Snowflake-loaded
+# contract data. Change these only if your DBA has named the schemas differently.
+DB_SCHEMA=ai_recommendations
+DB_SCHEMA_DATA=app_data
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=5
+# Used only by the test scripts in backend/tests: a server you may create databases on.
+# TEST_PG_ADMIN_DSN=postgresql://postgres:postgres@127.0.0.1:5432/postgres
+
+# --- Microsoft SSO (only needed if AUTH_MODE=sso) ---
+MS_TENANT_ID=
+MS_CLIENT_ID=
+MS_CLIENT_SECRET=
+# Must match the redirect URI registered in Entra exactly, e.g.
+#   https://app.example.com/api/auth/callback
+# With the Vite dev proxy it is the dev server's origin:
+#   http://localhost:5173/api/auth/callback
+MS_REDIRECT_URI=
+# Where the browser lands after a successful sign-in
+APP_URL=/
+# Optional: override the discovery URL (sovereign clouds, or a test identity provider)
+OIDC_METADATA_URL=
+
+# =====================================================================
+# Data
+# =====================================================================
+# Column on the contract table holding the 3-digit CTX (area code). Leave
+# blank to try CTX, CTXID, CTX_ID, CTX_CODE in that order.
+CTX_COLUMN=
+
+# ---- Data load (python -m ingest) ---------------------------------------------------------
+# Local files (development):  python -m ingest --source local --contracts ... --claims ...
+INGEST_CONTRACTS_FILE=
+INGEST_CLAIMS_FILE=
+# Snowflake (python -m ingest --source snowflake). Use a key pair for a scheduled job.
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_ROLE=
+SNOWFLAKE_PRIVATE_KEY_PATH=
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_PASSWORD=
+SNOWFLAKE_CONTRACT_TABLE=       # e.g. DB.SCHEMA.CONTRACT
+SNOWFLAKE_CLAIMS_TABLE=
+# Load rules (defaults shown)
+INGEST_LIVE_STATUS=live          # CONTRACT_STATUS value that means a live contract
+INGEST_LOST_WINDOW_DAYS=90       # a latest-version contract expired within this many days still shows as Lost
+INGEST_MIN_CTX_SAMPLE=30         # fewer valued contracts than this: the CTX uses the all-CTX median
+INGEST_MAX_DROP_PERCENT=50       # refuse an extract with this much fewer live contracts than the current data
+
+# A new exclusion set that would exclude more than this share of an area asks for confirmation.
+EXCLUSION_CONFIRM_SHARE=0.3

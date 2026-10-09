@@ -24,10 +24,19 @@ from typing import Optional
 
 from rules import PRODUCT_CATALOG, compute_risk, compute_segment, top_loss_reasons, feedback_sentiment_trend
 
-# "synthetic" (default) generates demo data in-process; "local" reads real
-# exported files from disk via local_data_loader.py. Same switch pattern as
-# llm_client.py's LLM_PROVIDER - one env var, no code change to flip it.
-DATA_SOURCE = os.environ.get("DATA_SOURCE", "local")
+# "postgres" (default) reads the contracts loaded by `python -m ingest`; "synthetic"
+# generates demo data in-process (the tests use it).
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "postgres")
+
+# The postgres source is a BRIDGE: it still loads contracts into memory so the current API and
+# UI keep working unchanged. That is fine for development-size data and wrong for 300K rows -
+# the paged worklist API replaces it. These caps keep a big table from exhausting memory meanwhile.
+STATE_MAX_ROWS = int(os.environ.get("STATE_MAX_ROWS", "20000"))
+STATE_CLAIMS_PER_CONTRACT = int(os.environ.get("STATE_CLAIMS_PER_CONTRACT", "15"))
+
+# Synthetic-only stand-ins for the real 3-digit area codes (the real ones
+# come from the contract table's CTX column).
+SYNTHETIC_CTX_CODES = ["034", "049", "043"]
 
 BUCKETS = [">90", "90", "60", "45", "30", "10", "Lost"]
 DUE_BUCKETS = ["90", "60", "45", "30", "10"]
@@ -146,6 +155,7 @@ def generate_contracts() -> list[dict]:
                     "contractId": f"CT-{seq:04d}",
                     "customerId": customer_id,
                     "customerName": customer_name,
+                    "ctx": SYNTHETIC_CTX_CODES[cust_seq % len(SYNTHETIC_CTX_CODES)],
                     "region": region_id,
                     "channel": channel,
                     "dealerId": dealer_id,
@@ -183,7 +193,7 @@ def generate_contracts() -> list[dict]:
 
 
 def _finalize_contracts(contracts: list[dict]) -> list[dict]:
-    """Shared second pass for both data sources (synthetic and local-file):
+    """Shared second pass for the synthetic source:
     fills in feedback trend, lost-reason ranking, and the risk score /
     segment, which all need either per-contract derivation or the book-
     wide median contract value. Kept as one function so the two loaders
@@ -203,14 +213,98 @@ def _finalize_contracts(contracts: list[dict]) -> list[dict]:
     return contracts
 
 
+def load_contracts_from_postgres() -> list[dict]:
+    """Reads the live contracts the ingest loaded (highest risk first, capped at
+    STATE_MAX_ROWS) and maps them to the contract shape the API and UI already use.
+    Risk, segment and bucket come straight from the data - nothing is recomputed here."""
+    import db
+    from sqlalchemy import text
+    from sqlalchemy.exc import ProgrammingError
+
+    D = db.DATA_SCHEMA
+    today = datetime.now(timezone.utc).date()
+    try:
+        with db.engine.connect() as conn:
+            total = conn.execute(text(f'SELECT count(*) FROM "{D}".contract WHERE in_scope')).scalar()
+            rows = conn.execute(text(f"""
+                SELECT contractid, customerid, company, account, ctxid, channel, equipment_type, expiry_bucket,
+                       risk_score, segment, annual_contract_value, price_increase_pct, contract_start_date,
+                       contract_duration_months, manufacturedate, is_general_service_include,
+                       repeat_issue_points, claim_frequency_points, claim_recency_points, written_off_ratio_points,
+                       coverage_gap_points, equipment_age_points, warranty_status_points, price_increase_points
+                FROM "{D}".contract WHERE in_scope
+                ORDER BY risk_score DESC NULLS LAST, contractid LIMIT :n"""), {"n": STATE_MAX_ROWS}).mappings().all()
+            ids = [r["contractid"] for r in rows]
+            claim_rows = conn.execute(text(f"""
+                SELECT contractid, claimdate, faultid, fault_description FROM (
+                  SELECT contractid, claimdate, faultid, fault_description,
+                         row_number() OVER (PARTITION BY contractid ORDER BY claimdate DESC NULLS LAST) AS rn
+                  FROM "{D}".claim WHERE contractid = ANY(:ids)) t
+                WHERE rn <= :k ORDER BY contractid, claimdate DESC NULLS LAST"""),
+                {"ids": ids, "k": STATE_CLAIMS_PER_CONTRACT}).all()
+    except ProgrammingError as err:
+        raise RuntimeError(
+            "No contract data in PostgreSQL yet. Run `alembic upgrade head`, load some data with "
+            "`python -m ingest` (see docs/local_setup.md), then start the app again.") from err
+    if total > len(rows):
+        print(f"[state] loaded the top {len(rows):,} of {total:,} live contracts into memory (STATE_MAX_ROWS). "
+              "Fine for development; the paged worklist API is what handles the full book.")
+
+    claims: dict[str, list[dict]] = {}
+    for cid, when, fault_id, desc in claim_rows:
+        claims.setdefault(cid, []).append({
+            "date": when.date().isoformat() if when else None, "faultId": fault_id,
+            "issue": desc or "Unspecified issue", "jobWrittenOff": False})
+
+    contracts = []
+    for r in rows:
+        start, made = r["contract_start_date"], r["manufacturedate"]
+        value = r["annual_contract_value"] or 0
+        contracts.append({
+            "contractId": r["contractid"], "customerId": r["customerid"],
+            "customerName": r["company"] or r["account"] or "Unknown", "ctx": r["ctxid"],
+            "region": "ETT", "channel": r["channel"], "dealerId": None,
+            "monthsOnBook": max(0, (today - start).days // 30) if start else 0,
+            "durationMonths": r["contract_duration_months"] or 0,
+            "contractValue": round(value), "monthlyAmount": round(value / 12, 2),
+            "priceIncreasePct": r["price_increase_pct"],
+            "serviceGeneral": bool(r["is_general_service_include"]),
+            "equipment": {"type": r["equipment_type"], "count": 1,
+                          "avgAgeYears": round((today - made).days / 365, 1) if made else 0},
+            "claims": claims.get(r["contractid"], []), "warrantyStart": None, "warrantyEnd": None,
+            "customerFeedback": {"recent12Months": [], "historical": []}, "feedbackTrend": None,
+            "bucket": r["expiry_bucket"], "lastMilestoneProcessed": None,
+            "riskScore": r["risk_score"] or 0,
+            "riskFactors": {
+                "Repeat issue": r["repeat_issue_points"] or 0, "Claim frequency": r["claim_frequency_points"] or 0,
+                "Claim recency": r["claim_recency_points"] or 0, "Written-off ratio": r["written_off_ratio_points"] or 0,
+                "Coverage gap": r["coverage_gap_points"] or 0, "Equipment age": r["equipment_age_points"] or 0,
+                "Warranty status": r["warranty_status_points"] or 0, "Price increase": r["price_increase_points"] or 0},
+            "segment": r["segment"] or "Standard", "lostReasons": None,
+        })
+    for c in contracts:
+        c["feedbackTrend"] = feedback_sentiment_trend(c["customerFeedback"])
+        if c["bucket"] == "Lost":
+            c["lostReasons"] = top_loss_reasons(c["claims"])
+    return contracts
+
+
 def load_contracts() -> list[dict]:
     """Single entry point AppState uses to get contracts, regardless of
-    source. Add a new DATA_SOURCE branch here (e.g. "snowflake") without
-    touching AppState itself when that becomes relevant."""
-    if DATA_SOURCE == "local":
-        from local_data_loader import load_contracts_from_local
-        return _finalize_contracts(load_contracts_from_local())
+    source. Add a new DATA_SOURCE branch here without touching AppState itself."""
+    if DATA_SOURCE == "postgres":
+        return load_contracts_from_postgres()
     return generate_contracts()
+
+
+_ANY = object()  # sentinel: "don't filter by ctx" (None is a real value: contracts with no CTX)
+
+
+def customer_summary_key(customer_id, ctx) -> str:
+    """Customer summaries are cached per (customer, CTX), never per customer
+    alone: a customer with contracts in two areas would otherwise get ONE
+    summary narrating both, shown to a manager who may only see one."""
+    return f"{customer_id}|{ctx or ''}"
 
 
 class AppState:
@@ -219,6 +313,7 @@ class AppState:
 
     def __init__(self):
         self.contracts: list[dict] = load_contracts()
+        self._index()
         self.trace: list[dict] = []
         self.batch_status: dict = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries: dict = {}   # contractId -> {status, data, error}
@@ -226,16 +321,47 @@ class AppState:
 
     def reset(self):
         self.contracts = load_contracts()
+        self._index()
         self.trace = []
         self.batch_status = {"running": False, "done": 0, "total": 0, "lastError": None}
         self.ticket_summaries = {}
         self.customer_summaries = {}
 
-    def contract_by_id(self, contract_id: str) -> Optional[dict]:
-        return next((c for c in self.contracts if c["contractId"] == contract_id), None)
+    def _index(self) -> None:
+        """Rebuilt whenever contracts change, so scope checks (called on
+        every request, and once per trace row) are dictionary lookups
+        instead of scans over the whole book."""
+        self._by_id = {c["contractId"]: c for c in self.contracts}
+        self._by_ctx: dict = {}
+        for c in self.contracts:
+            self._by_ctx.setdefault(c.get("ctx"), []).append(c)
 
-    def contracts_for_customer(self, customer_id: str) -> list[dict]:
-        return [c for c in self.contracts if c["customerId"] == customer_id]
+    def contract_by_id(self, contract_id: str) -> Optional[dict]:
+        return self._by_id.get(contract_id)
+
+    def ctx_of(self, contract_id: str) -> Optional[str]:
+        c = self._by_id.get(contract_id)
+        return c.get("ctx") if c else None
+
+    def contracts_in(self, ctxs) -> list[dict]:
+        """ctxs=None -> every contract (admin). Otherwise only contracts whose
+        CTX is in the given set; contracts with no CTX are never included."""
+        if ctxs is None:
+            return self.contracts
+        return [c for code in sorted(ctxs) for c in self._by_ctx.get(code, [])]
+
+    def ctx_codes(self) -> list[str]:
+        return sorted(code for code in self._by_ctx if code)
+
+    def ctx_counts(self) -> dict:
+        return {code: len(rows) for code, rows in self._by_ctx.items() if code}
+
+    def count_without_ctx(self) -> int:
+        return len(self._by_ctx.get(None, []))
+
+    def contracts_for_customer(self, customer_id: str, ctx=_ANY) -> list[dict]:
+        return [c for c in self.contracts
+                if c["customerId"] == customer_id and (ctx is _ANY or c.get("ctx") == ctx)]
 
     def latest_trace_for(self, contract_id: str) -> Optional[dict]:
         for record in reversed(self.trace):

@@ -10,30 +10,80 @@ async function request(path, options) {
   if (!res.ok) {
     let detail;
     try { detail = (await res.json()).detail; } catch (e) { detail = res.statusText; }
-    throw new Error(detail || `Request to ${path} failed (HTTP ${res.status})`);
+    // The session ended, or an admin changed this user's access while the page
+    // was open: tell the app to re-check who the user is. /api/auth/* is excluded
+    // so the initial "am I signed in?" 401 can't trigger itself in a loop.
+    const accessChanged = res.status === 401 ||
+      (res.status === 403 && (detail === "access_pending" || detail === "account_disabled"));
+    if (accessChanged && !path.startsWith("/api/auth/")) {
+      window.dispatchEvent(new Event("auth:changed"));
+    }
+    const err = new Error(typeof detail === "string" && detail ? detail : `Request to ${path} failed (HTTP ${res.status})`);
+    err.status = res.status;
+    err.detail = detail;
+    throw err;
   }
   return res.json();
 }
 
+// Arrays become repeated keys (?area=034&area=049); empty values are left out.
+const qs = (params) => {
+  const u = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (Array.isArray(v)) v.forEach((x) => u.append(k, x));
+    else if (v !== null && v !== undefined && v !== "") u.append(k, v);
+  });
+  return u.toString();
+};
+
+const put = (path, body) => request(path, { method: "PUT", body: JSON.stringify(body) });
+
 export const api = {
-  getContracts: () => request("/api/contracts"),
-  getTrace: () => request("/api/trace"),
-  getMetrics: () => request("/api/metrics"),
-  getCampaigns: () => request("/api/campaigns"),
-  getBatchStatus: () => request("/api/batch/status"),
-  runBatch: () => request("/api/batch/run", { method: "POST" }),
+  // --- auth ---
+  getAuthConfig: () => request("/api/auth/config"),
+  getMe: () => request("/api/auth/me"),
+  devLogin: (email) => request("/api/auth/dev/login", { method: "POST", body: JSON.stringify({ email }) }),
+  logout: () => request("/api/auth/logout", { method: "POST" }),
+
+  // --- admin (Access page) ---
+  getAdminUsers: () => request("/api/admin/users"),
+  getAdminCtx: () => request("/api/admin/ctx"),
+  getAdminAudit: (limit = 20) => request(`/api/admin/audit?limit=${limit}`),
+  setUserCtx: (userId, ctxs) => put(`/api/admin/users/${userId}/ctx`, { ctxs }),
+  setUserRole: (userId, role) => put(`/api/admin/users/${userId}/role`, { role }),
+  setUserDisabled: (userId, disabled) => put(`/api/admin/users/${userId}/status`, { disabled }),
+  renameCtx: (code, name) => put(`/api/admin/ctx/${code}`, { name }),
+
+  // --- contracts: nothing here ever asks for "all of them" - the worklist is paged, the rest is aggregated server-side ---
+  getWorklist: (params, signal) => request(`/api/worklist?${qs(params)}`, { signal }),
+  getSummary: (params, signal) => request(`/api/summary?${qs(params)}`, { signal }),
+  getContract: (id, signal) => request(`/api/contracts/${encodeURIComponent(id)}`, { signal }),
+  // Personal contact data only leaves the server on this explicit call, which is audited.
+  revealContact: (id) => request(`/api/contracts/${encodeURIComponent(id)}/contact`, { method: "POST" }),
+  getWorklistView: () => request("/api/me/worklist-view"),
+  saveWorklistView: (view) => put("/api/me/worklist-view", view),
   sendFeedback: (contractId, outcome, note) =>
-    request("/api/feedback", { method: "POST", body: JSON.stringify({ contractId, outcome, note }) }),
+    request("/api/feedback", { method: "POST", body: JSON.stringify({ contractId, ...(outcome !== undefined && { outcome }), ...(note !== undefined && { note }) }) }),
   setActionStatus: (contractId, actionStatus) =>
     request("/api/action-status", { method: "POST", body: JSON.stringify({ contractId, actionStatus }) }),
   getModelInfo: () => request("/api/model-info"),
-  getTicketSummaries: () => request("/api/ticket-summaries"),
-  runTicketSummary: (contractId) =>
-    request("/api/ticket-summaries/run", { method: "POST", body: JSON.stringify({ contractId }) }),
-  getCustomerSummaries: () => request("/api/customer-summaries"),
-  runCustomerSummary: (customerId) =>
-    request("/api/customer-summaries/run", { method: "POST", body: JSON.stringify({ customerId }) }),
-  getOutcomeByRiskBucket: () => request("/api/outcome-by-risk-bucket"),
-  getRegionSummary: () => request("/api/region-summary"),
-  reset: () => request("/api/reset", { method: "POST" }),
+
+  // --- exclusion sets and retention actions ---
+  getExclusions: (deleted) => request(`/api/exclusions${deleted ? "?deleted=true" : ""}`),
+  createExclusion: (body) => request("/api/exclusions", { method: "POST", body: JSON.stringify(body) }),
+  updateExclusion: (id, body) => put(`/api/exclusions/${id}`, body),
+  exclusionAction: (id, action, body) => request(`/api/exclusions/${id}/${action}`, { method: "POST", body: JSON.stringify(body || {}) }), // activate | deactivate | restore
+  deleteExclusion: (id, version) => request(`/api/exclusions/${id}?version=${version}`, { method: "DELETE" }),
+  previewExclusion: (body) => request("/api/exclusions/preview", { method: "POST", body: JSON.stringify(body) }),
+  getExclusionPref: () => request("/api/me/exclusion-pref"),
+  saveExclusionPref: (body) => put("/api/me/exclusion-pref", body),
+  getRuleColumns: () => request("/api/rules/columns"),
+  getColumnValues: (key) => request(`/api/rules/columns/${encodeURIComponent(key)}/values`),
+  getActions: (deleted) => request(`/api/retention-actions${deleted ? "?deleted=true" : ""}`),
+  createAction: (body) => request("/api/retention-actions", { method: "POST", body: JSON.stringify(body) }),
+  updateAction: (id, body) => put(`/api/retention-actions/${id}`, body),
+  deleteAction: (id, version) => request(`/api/retention-actions/${id}?version=${version}`, { method: "DELETE" }),
+  restoreAction: (id) => request(`/api/retention-actions/${id}/restore`, { method: "POST" }),
+  cloneAction: (id, body) => request(`/api/retention-actions/${id}/clone`, { method: "POST", body: JSON.stringify(body) }),
+  previewAction: (body) => request("/api/retention-actions/preview", { method: "POST", body: JSON.stringify(body) }),
 };

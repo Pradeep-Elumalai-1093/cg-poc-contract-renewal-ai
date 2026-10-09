@@ -1,0 +1,26 @@
+# Local development database: PostgreSQL 18 (uuidv7() is built in).
+#
+#   docker compose up -d db
+#   cd backend && alembic upgrade head
+#
+# The official 18+ image keeps its data under /var/lib/postgresql/<major>/..., so the
+# volume mounts at /var/lib/postgresql (not .../data as on 17 and earlier).
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: uda_1325
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres        # development only
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d uda_1325"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

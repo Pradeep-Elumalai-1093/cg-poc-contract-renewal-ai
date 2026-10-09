@@ -1,0 +1,15 @@
+{
+  "name": "pcr-web-claims-summary",
+  "description": "The service claim history of one contract, summarised.",
+  "variables": [
+    "equipment_json",
+    "claims_json",
+    "totals_json"
+  ],
+  "inference": {
+    "maxTokens": 400,
+    "temperature": 0.2
+  },
+  "template": "You are the Service Ticket Summary Agent. Given this contract's service claim history, write a concise 2 to 3 sentence summary covering the overall pattern (recurring faults, any jobs written off without resolution) and anything notable an account manager should know before deciding on a retention action.\nUse only the facts below. Plain prose, no headers, no bullet points, no markdown.\n\nEquipment (JSON):\n{{equipment_json}}\n\nTotals over the whole contract (JSON):\n{{totals_json}}\n\nMost recent service claims, newest first (JSON):\n{{claims_json}}\n\nRespond with plain text only - the summary itself, nothing else.",
+  "job_type": "web_claims_summary"
+}

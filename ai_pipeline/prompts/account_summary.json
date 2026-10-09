@@ -1,0 +1,13 @@
+{
+  "name": "pcr-account-summary",
+  "description": "A whole customer account across its live contracts.",
+  "variables": [
+    "account_json"
+  ],
+  "inference": {
+    "maxTokens": 400,
+    "temperature": 0.2
+  },
+  "template": "You are the Customer Summary Agent. Given the figures for all of this account's live contracts, write a concise 2 to 3 sentence executive summary of the overall relationship: total scope, general health across the contracts, and anything an account manager should keep in mind across the whole relationship (not just one contract).\nUse only the facts below. Plain prose, no headers, no bullet points, no markdown.\n\nAccount (JSON):\n{{account_json}}\n\nRespond with plain text only - the summary itself, nothing else.",
+  "job_type": "account_summary"
+}

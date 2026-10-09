@@ -29,4 +29,3 @@ class CustomJSONEncoder(JSONEncoder):
             return jsonable_encoder(object)
 
         return super().default(object)
-
