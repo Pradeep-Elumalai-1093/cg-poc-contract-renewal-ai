@@ -49,7 +49,11 @@ Parameters:
     Description: When the daily planning run starts (UTC).
   SweepSchedule:
     Type: String
-    Default: rate(15 minutes)
+    Default: rate(1 hour)
+    Description: >-
+      How often the safety-net sweep asks Bedrock about batches that are still open. Bedrock's finish event is the normal path, so
+      this only sets how long a missed event or a crashed handler waits. Each run opens a database connection, which also keeps an
+      auto-pausing Aurora awake - so don't make it more frequent than you need.
   MinBatchRecords:
     Type: Number
     Default: 100

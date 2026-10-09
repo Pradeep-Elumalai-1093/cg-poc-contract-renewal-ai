@@ -9,7 +9,7 @@ EventBridge (daily) ─► Lambda 1: start-batches ──► Bedrock batch infer
                          │  prompts from Prompt Management                                  ▼
                          └─► S3 PCR/AI_Input/<job>/<run>/                       Lambda 2: on-batch-complete
                                                                                   │  S3 PCR/AI_Output/…
-EventBridge (every 15 min) ─► Lambda 2 (sweep: asks Bedrock about open batches) ──┘  ─► Aurora (4 result tables)
+EventBridge (hourly)  ─────► Lambda 2 (sweep: asks Bedrock about open batches) ──┘  ─► Aurora (4 result tables)
 ```
 
 ## What it does each day
@@ -25,7 +25,7 @@ EventBridge (every 15 min) ─► Lambda 2 (sweep: asks Bedrock about open batch
    inserted **once**, after the last pass (the job's database role cannot update a row).
 4. **Never writes twice.** A duplicate completion event, a retried Lambda, or a crashed handler cannot double-write: the batch
    log's atomic claim lets exactly one invocation through, writes skip a result whose `input_hash` is already stored, and
-   starting a job is idempotent per run. A scheduled sweep completes any batch whose event never arrived.
+   starting a job is idempotent per run. An hourly sweep (`SweepSchedule`) completes any batch whose event never arrived.
 
 ## Files
 
